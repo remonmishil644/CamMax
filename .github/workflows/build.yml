@@ -14,12 +14,17 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.7"
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+      - name: Install Gradle 8.7
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle-8.7-bin.zip
+          echo "$GITHUB_WORKSPACE/gradle-8.7/bin" >> $GITHUB_PATH
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: CamMax-debug-apk
           path: app/build/outputs/apk/debug/*.apk
