@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView android:text="Camera"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/cameraSpinner"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <TextView android:text="Mode (resolution / fps)"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/modeSpinner"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <TextView android:text="Bitrate (Mbps)"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <SeekBar android:id="@+id/bitrateSeek"
+                android:max="300" android:progress="100"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <TextView android:text="Manual ISO (0 = auto)"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <SeekBar android:id="@+id/isoSeek"
+                android:max="3200" android:progress="0"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <Switch android:id="@+id/hevcSwitch"
+                android:text="HEVC (smaller files)"
+                android:checked="true"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+            <Button android:id="@+id/startBtn" android:text="REC"
+                android:layout_marginTop="20dp"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <Button android:id="@+id/hideScreenBtn" android:text="Hide screen (recording continues)"
+                android:layout_marginTop="8dp"
+                android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+            <TextView android:id="@+id/statusText" android:text="Idle"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+    </ScrollView>
+
+    <View android:id="@+id/blackOverlay"
+        android:background="#000000"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+</FrameLayout>
