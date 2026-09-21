@@ -212,6 +212,12 @@
                     app:tickVisible="false"
                     android:layout_width="match_parent" android:layout_height="wrap_content" />
 
+                <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/gyroSwitch"
+                    android:text="Save motion data for Gyroflow"
+                    android:textSize="15sp"
+                    android:minHeight="56dp"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" />
+
                 <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/hevcSwitch"
                     android:text="HEVC (files half the size of H.264)"
                     android:textSize="15sp"

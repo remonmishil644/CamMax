@@ -92,8 +92,9 @@ object CameraCaps {
         return out
     }
 
-    fun bestStab(options: List<Int>) = when {
-        Stab.ENHANCED in options -> Stab.ENHANCED
+    // Android guarantees Enhanced (preview stabilization) only up to 1440p.
+    fun bestStab(options: List<Int>, width: Int) = when {
+        Stab.ENHANCED in options && width <= 2560 -> Stab.ENHANCED
         Stab.ELECTRONIC in options -> Stab.ELECTRONIC
         Stab.OPTICAL in options -> Stab.OPTICAL
         else -> Stab.OFF

@@ -53,6 +53,7 @@ class SettingsActivity : AppCompatActivity() {
         b.bitrateSlider.value = snap(p.bitrateMbps, 10, 300, 5)
         b.isoSlider.value = snap(p.iso, 0, 3200, 50)
         b.hevcSwitch.isChecked = p.hevc
+        b.gyroSwitch.isChecked = p.gyro
         if (p.customFps > 0) b.customFps.setText(p.customFps.toString())
 
         buildLensChips()
@@ -91,6 +92,7 @@ class SettingsActivity : AppCompatActivity() {
             changed()
         }
         b.hevcSwitch.setOnCheckedChangeListener { _, on -> p.hevc = on; changed() }
+        b.gyroSwitch.setOnCheckedChangeListener { _, on -> p.gyro = on; changed() }
         b.customFps.doAfterTextChanged {
             p.customFps = it?.toString()?.toIntOrNull()?.takeIf { v -> v in 1..960 } ?: 0
             changed()
@@ -158,7 +160,7 @@ class SettingsActivity : AppCompatActivity() {
         building = true
         b.stabChips.removeAllViews()
         val options = CameraCaps.stabOptions(this, p.cameraId)
-        val selected = if (p.stabMode in options) p.stabMode else CameraCaps.bestStab(options)
+        val selected = if (p.stabMode in options) p.stabMode else CameraCaps.bestStab(options, p.width)
         options.forEach { m -> addChip(b.stabChips, Stab.label(m), m, m == selected) }
         p.stabMode = selected
         building = false
@@ -232,12 +234,13 @@ class SettingsActivity : AppCompatActivity() {
 
         b.stabNote.text = when {
             p.highSpeed -> "High-speed mode turns stabilization off."
-            p.stabMode == Stab.ENHANCED -> "Strongest mode the camera offers. It crops the picture by up to 20%."
+            p.stabMode == Stab.ENHANCED -> "Strongest mode. Crops up to 20%. Android guarantees it only up to 1440p. At 4K the camera may refuse it, and CamMax then falls back to Optical."
             p.stabMode == Stab.ELECTRONIC -> "Software stabilization with a small crop. Android recommends this over mixing both."
             p.stabMode == Stab.BOTH -> "Lens and software together. Android warns they can fight each other and cause wobble."
             p.stabMode == Stab.OPTICAL -> "Lens stabilization only. No crop. Good for standing still, weak for walking."
-            else -> "No stabilization. Use on a tripod."
-        }
+            else -> "No stabilization. Use on a tripod, or stabilize later in Gyroflow."
+        } + if (p.gyro && p.stabMode in listOf(Stab.ELECTRONIC, Stab.BOTH, Stab.ENHANCED))
+            "\nGyroflow needs clips without electronic stabilization. For Gyroflow, pick Off or Optical." else ""
 
         val opts = CameraCaps.fpsOptions(this, p.cameraId, Size(p.width, p.height))
         val chosen = opts.firstOrNull { it.fps == p.chipFps && it.highSpeed == p.highSpeed }

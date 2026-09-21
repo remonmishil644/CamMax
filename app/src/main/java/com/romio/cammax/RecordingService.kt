@@ -71,6 +71,8 @@ class RecordingService : Service() {
     private var wake: PowerManager.WakeLock? = null
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
+    private var gyro: GyroLogger? = null
+    private var fallbackNote = ""
     private var lastStartId = 0
     private var openGen = 0
     private var rotation = 0
@@ -154,12 +156,18 @@ class RecordingService : Service() {
         p = Prefs(this)
         cfg = p.snapshot()
         camMgr = getSystemService(CAMERA_SERVICE) as CameraManager
-        startAttempts = 0; retries = 0; storageFull = false; clips = 0
+        startAttempts = 0; retries = 0; storageFull = false; clips = 0; fallbackNote = ""
         log("begin: cam${cfg.cameraId} ${cfg.width}x${cfg.height}@${cfg.fps} " +
                 "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
                 "stab=${Stab.label(cfg.stabMode)}(${cfg.stabMode}) iso=${cfg.iso} autoStop=$autoStopMs")
         try { Salvage.run(this, force = true) } catch (e: Exception) { log("salvage failed: $e") }
         try { watchThermal() } catch (e: Exception) { log("thermal watch failed: $e") }
+        if (cfg.gyro) {
+            try {
+                val g = GyroLogger(this)
+                if (g.start()) gyro = g else { g.stop(); log("no gyroscope sensor") }
+            } catch (e: Exception) { log("gyro start failed: $e") }
+        }
         h.removeCallbacks(stallCheck)
         h.postDelayed(stallCheck, 5_000)
         try {
@@ -252,8 +260,8 @@ class RecordingService : Service() {
             // High-speed sessions reject stabilization and manual exposure.
             if (!cfg.highSpeed) {
                 val options = CameraCaps.stabOptions(this@RecordingService, cfg.cameraId)
-                var mode = if (cfg.stabMode == Stab.AUTO) CameraCaps.bestStab(options) else cfg.stabMode
-                if (mode !in options) mode = CameraCaps.bestStab(options)
+                var mode = if (cfg.stabMode == Stab.AUTO) CameraCaps.bestStab(options, cfg.width) else cfg.stabMode
+                if (mode !in options) mode = CameraCaps.bestStab(options, cfg.width)
                 val eisList = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0)
                 val oisList = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: IntArray(0)
                 val eis = when (mode) { Stab.ENHANCED -> 2; Stab.ELECTRONIC, Stab.BOTH -> 1; else -> 0 }
@@ -315,6 +323,7 @@ class RecordingService : Service() {
                             return
                         }
                         main.removeCallbacks(watchdog)
+                        current?.let { gyro?.beginClip(it.name) }
                         if (state == State.STARTING) {
                             recordingSince = SystemClock.elapsedRealtime()
                             state = State.RECORDING
@@ -353,6 +362,7 @@ class RecordingService : Service() {
                 current = next
                 next = null
                 retries = 0
+                current?.let { gyro?.beginClip(it.name) }
             }
             MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED -> {
                 if (storageFull) finish("Storage full. Clips saved. Delete some files, then tap again.")
@@ -369,8 +379,26 @@ class RecordingService : Service() {
                 teardown()
                 startAttempts++
                 log("start attempt $startAttempts failed: $why")
-                if (startAttempts >= 3) finish("Could not start: $why")
-                else h.postDelayed(retryRunnable, 800)
+                // Record something instead of nothing: each retry asks the camera for less.
+                when (startAttempts) {
+                    1 -> if (cfg.stabMode != Stab.OPTICAL && cfg.stabMode != Stab.OFF) {
+                        fallbackNote = " The camera refused ${Stab.label(cfg.stabMode)} stabilization here, so CamMax used Optical."
+                        cfg = cfg.copy(stabMode = Stab.OPTICAL)
+                    }
+                    2 -> if (cfg.stabMode != Stab.OFF) {
+                        fallbackNote = " The camera refused stabilization here, so CamMax recorded without it."
+                        cfg = cfg.copy(stabMode = Stab.OFF)
+                    }
+                    3 -> if (cfg.fps > 30 && !cfg.highSpeed) {
+                        fallbackNote = " The camera refused ${cfg.fps} fps here, so CamMax recorded 30 fps without stabilization."
+                        cfg = cfg.copy(stabMode = Stab.OFF, fps = 30)
+                    }
+                }
+                if (startAttempts >= 4) finish("Could not start: $why")
+                else {
+                    log("retrying with stab=${Stab.label(cfg.stabMode)} fps=${cfg.fps}")
+                    h.postDelayed(retryRunnable, 800)
+                }
             }
             State.RECORDING -> {
                 teardown()
@@ -390,6 +418,7 @@ class RecordingService : Service() {
     private fun teardown() {
         openGen++
         h.removeCallbacks(retryRunnable)
+        gyro?.endClip()
         try { session?.stopRepeating() } catch (_: Exception) {}
         val ok = try { recorder?.stop(); true } catch (_: Exception) { false }
         try { session?.close() } catch (_: Exception) {}
@@ -411,13 +440,16 @@ class RecordingService : Service() {
         h.removeCallbacks(autoStop)
         h.removeCallbacks(stallCheck)
         val fps = measuredFps()
+        val motion = gyro?.let { ". Motion data: %.0f Hz, saved to Documents/CamMax".format(it.rateHz()) } ?: ""
         val stab = if (appliedStab.isNotEmpty()) ". Stabilization: $appliedStab" else ""
         teardown()
-        val got = (if (fps > 0) ", measured %.1f fps".format(fps) else "") + stab
+        try { gyro?.stop() } catch (_: Exception) {}
+        gyro = null
+        val got = (if (fps > 0) ", measured %.1f fps".format(fps) else "") + stab + motion + "." + fallbackNote
         if (error == null) {
             Buzz.stopped(this)
             p.lastStatus = "Saved $clips clip(s) to DCIM/CamMax. " +
-                    "${cfg.width}x${cfg.height}, asked ${cfg.fps} fps$got."
+                    "${cfg.width}x${cfg.height}, asked ${cfg.fps} fps$got"
         } else {
             if (buzz) Buzz.error(this)
             p.lastStatus = error + got
@@ -623,7 +655,7 @@ class RecordingService : Service() {
         const val ACTION_START = "com.romio.cammax.START"
         const val ACTION_STOP = "com.romio.cammax.STOP"
         const val EXTRA_AUTO_STOP_MS = "autoStopMs"
-        const val AUDIO_BPS = 256_000
+        const val AUDIO_BPS = 192_000
         const val SEGMENT_SECONDS = 120L
         @Volatile var state = State.IDLE
         @Volatile var recordingSince = 0L

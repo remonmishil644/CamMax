@@ -11,7 +11,8 @@ data class Config(
     val iso: Int,
     val hevc: Boolean,
     val stabMode: Int,
-    val highSpeed: Boolean
+    val highSpeed: Boolean,
+    val gyro: Boolean
 )
 
 object Stab {
@@ -75,6 +76,10 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("stabMode", if (stabilize) Stab.AUTO else Stab.OFF)
         set(v) = sp.edit().putInt("stabMode", v).apply()
 
+    var gyro: Boolean
+        get() = sp.getBoolean("gyro", true)
+        set(v) = sp.edit().putBoolean("gyro", v).apply()
+
     var highSpeed: Boolean
         get() = sp.getBoolean("highSpeed", false)
         set(v) = sp.edit().putBoolean("highSpeed", v).apply()
@@ -103,5 +108,5 @@ class Prefs(ctx: Context) {
         sp.edit().putBoolean("m6", true).apply()
     }
 
-    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabMode, highSpeed)
+    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabMode, highSpeed, gyro)
 }
