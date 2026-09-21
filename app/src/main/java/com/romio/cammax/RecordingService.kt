@@ -183,8 +183,9 @@ class RecordingService : Service() {
     }
 
     private fun openAndRecord() {
-        if (!hasSpace()) {
-            finish("Storage full. Delete some files, then tap CamMax REC again.")
+        if (freeBytes() < MIN_START_BYTES) {
+            finish("Phone storage is full: only %.1f GB free. Delete some files, then tap CamMax REC again."
+                .format(freeBytes() / 1e9))
             return
         }
         appliedStab = ""; frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
@@ -232,7 +233,8 @@ class RecordingService : Service() {
         r.setVideoFrameRate(cfg.fps)
         r.setVideoEncodingBitRate(cfg.bitrateMbps * 1_000_000)
         r.setOrientationHint(rotation)
-        r.setMaxFileSize(segmentBytes())
+        // On a nearly full phone the first clip is shorter, so recording still starts.
+        r.setMaxFileSize(minOf(segmentBytes(), freeBytes() - RESERVE_BYTES))
         r.setOutputFile(seg.pfd.fileDescriptor)
         r.setOnInfoListener { _, what, _ -> h.post { if (gen == openGen) onInfo(what) } }
         r.setOnErrorListener { _, what, extra ->
@@ -365,7 +367,8 @@ class RecordingService : Service() {
                 current?.let { gyro?.beginClip(it.name) }
             }
             MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED -> {
-                if (storageFull) finish("Storage full. Clips saved. Delete some files, then tap again.")
+                if (storageFull || freeBytes() < MIN_START_BYTES)
+                    finish("Phone storage is full. Clips saved. Delete some files, then tap again.")
                 else interrupted("clip switch missed")
             }
         }
@@ -440,7 +443,9 @@ class RecordingService : Service() {
         h.removeCallbacks(autoStop)
         h.removeCallbacks(stallCheck)
         val fps = measuredFps()
-        val motion = gyro?.let { ". Motion data: %.0f Hz, saved to Documents/CamMax".format(it.rateHz()) } ?: ""
+        val g = gyro
+        val motion = if (g != null && g.samples > 0 && (clips > 0 || current != null))
+            ". Motion data: %.0f Hz, saved to Documents/CamMax".format(g.rateHz()) else ""
         val stab = if (appliedStab.isNotEmpty()) ". Stabilization: $appliedStab" else ""
         teardown()
         try { gyro?.stop() } catch (_: Exception) {}
@@ -543,10 +548,12 @@ class RecordingService : Service() {
     private fun segmentBytes(): Long =
         ((cfg.bitrateMbps * 1_000_000L + AUDIO_BPS) / 8 * SEGMENT_SECONDS).coerceAtMost(3_900_000_000L)
 
-    private fun hasSpace(): Boolean = try {
-        val path = getExternalFilesDir(null)?.path
-        path == null || StatFs(path).availableBytes > segmentBytes() + 300L * 1024 * 1024
-    } catch (_: Exception) { true }
+    private fun freeBytes(): Long = try {
+        StatFs(getExternalFilesDir(null)!!.path).availableBytes
+    } catch (_: Exception) { Long.MAX_VALUE / 2 }
+
+    // Room for one more whole clip after the current one finishes.
+    private fun hasSpace(): Boolean = freeBytes() > segmentBytes() * 11 / 10 + RESERVE_BYTES
 
     private fun detectRotation(cb: (Int) -> Unit) {
         val sm = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -657,6 +664,8 @@ class RecordingService : Service() {
         const val EXTRA_AUTO_STOP_MS = "autoStopMs"
         const val AUDIO_BPS = 192_000
         const val SEGMENT_SECONDS = 120L
+        const val RESERVE_BYTES = 300L * 1024 * 1024
+        const val MIN_START_BYTES = 700L * 1024 * 1024
         @Volatile var state = State.IDLE
         @Volatile var recordingSince = 0L
         @Volatile private var active: RecordingService? = null

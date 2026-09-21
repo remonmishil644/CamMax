@@ -272,6 +272,8 @@ class SettingsActivity : AppCompatActivity() {
         b.testBtn.text = if (idle) "Test these settings (10 s)" else "$label…"
 
         val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val free = try { StatFs(getExternalFilesDir(null)!!.path).availableBytes } catch (_: Exception) { Long.MAX_VALUE }
+        val perMin = (p.bitrateMbps * 1_000_000.0 + RecordingService.AUDIO_BPS) / 8 * 60
         when {
             missingPerms().isNotEmpty() -> warn(
                 "CamMax needs the camera and the microphone. Nothing records until you allow both.",
@@ -284,6 +286,12 @@ class SettingsActivity : AppCompatActivity() {
                         Uri.parse("package:$packageName")))
                 }
             }
+            free < RecordingService.MIN_START_BYTES -> warn(
+                "Phone storage is full: %.1f GB free. CamMax cannot record. Delete files, starting with old clips in DCIM/CamMax.".format(free / 1e9),
+                "Open storage settings") { openStorage() }
+            free / perMin < 10 -> warn(
+                "Storage is almost full: %.1f GB free, about %d minutes at this quality.".format(free / 1e9, (free / perMin).toInt()),
+                "Open storage settings") { openStorage() }
             !pm.isIgnoringBatteryOptimizations(packageName) -> warn(
                 "Samsung battery saving can stop a long recording. Let CamMax run without limits.",
                 "Allow background running") {
@@ -296,6 +304,11 @@ class SettingsActivity : AppCompatActivity() {
             }
             else -> b.warnCard.visibility = View.GONE
         }
+    }
+
+    private fun openStorage() {
+        try { startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }
+        catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
     }
 
     private fun warn(text: String, action: String, onClick: () -> Unit) {

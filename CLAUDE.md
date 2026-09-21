@@ -23,7 +23,12 @@ A Kotlin Android app (Camera2 + MediaRecorder, minSdk 29, targetSdk 34). Two lau
 - Stabilization chips show only **Off** and **Optical**: Samsung exposes no electronic stabilization (EIS) to
   third-party apps. Walking footage needs Gyroflow (motion data) or a gimbal.
 - "There was a problem parsing the package" was fixed by restarting the phone. The APK was fine.
-- Lenses exposed: camera 0 (main) and camera 2 (ultrawide). Both record 4K.
+- Lenses exposed: camera 0 (main, LEVEL_3, OIS) and camera 2 (ultrawide, LIMITED, no OIS). Both record 4K.
+  Tele cameras 6 (3x) and 7 (10x) are physical IDs with no 4K recorder sizes.
+- Camera info dump (2026-09-22): video stabilization modes = [0] on every camera, so there is no EIS at all.
+  High-speed sessions exist: 1920x1080 and 1280x720 at 120 and 240 fps.
+- 2026-09-22 "it records nothing": the event log showed `Storage full` on every start. The phone was out of
+  space (4K60 at 100 Mbps is about 45 GB per hour). Check the log before touching code.
 
 ## Files
 - `RecordingService.kt` — state machine (IDLE, STARTING, RECORDING, STOPPING), 2-minute clips via
