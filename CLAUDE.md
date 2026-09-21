@@ -9,6 +9,11 @@ A Kotlin Android app (Camera2 + MediaRecorder, minSdk 29, targetSdk 34). Two lau
   `RecordingService`, tap again stops it. Vibration is the only feedback: long = started, short = stopped,
   three short = error. No preview, no visible notification, no timer, no beeps (Romio's explicit choices).
 
+- **CamMax Dark** launches `BlackoutActivity`: it opens Samsung's own camera in video mode, and `BlackoutService`
+  covers the screen with an opaque black overlay after 5 s (AMOLED black = pixels off). The overlay is not
+  focusable, so the volume keys still reach Samsung's camera and start or stop its recording. Hold 1 s to exit.
+  This is the only route to Samsung's stabilization. Needs "Display over other apps".
+
 ## Build and release (no Android SDK or Java on this PC)
 - `git push` to `main` → GitHub Actions builds, verifies (`apksigner`, `aapt2`), and publishes a release.
 - Permanent install link: https://github.com/remonmishil644/CamMax/releases/latest/download/CamMax.apk
@@ -36,6 +41,7 @@ A Kotlin Android app (Camera2 + MediaRecorder, minSdk 29, targetSdk 34). Two lau
 - `GyroLogger.kt` — one Gyroflow `.gcsv` per clip in `Documents/CamMax` (videos go to `DCIM/CamMax`).
 - `ToggleActivity.kt` — the tap handler. `SettingsActivity.kt` + `res/layout/activity_main.xml` — the UI.
 - `CameraCaps.kt` — lens, size, fps, stabilization discovery. `Salvage.kt` — keeps crashed clips as `_broken.mp4`.
+- `Blackout.kt` — dark mode (activity + overlay service).
 - `EventLog.kt` — in-app event log (`files/events.log`), vibration helper, `App` class with crash logging.
 
 ## Rules for this project
@@ -43,4 +49,4 @@ A Kotlin Android app (Camera2 + MediaRecorder, minSdk 29, targetSdk 34). Two lau
 - Any bug: get the in-app event log first (Show advanced → Event log → Copy). Do not guess twice.
 - Reply to Romio in Arabic (`arabic-writing` skill) and in `google-style`.
 - Open items: in-app repair of `_broken.mp4` clips (sidecar JSON per clip already stores encoder settings);
-  Gyroflow IMU orientation string is a guess (`XYZ`) and the lens profile is not calibrated.
+  Gyroflow IMU orientation string is a guess (`YxZ`); Gyroflow needs OIS off too and the lens profile is not calibrated.

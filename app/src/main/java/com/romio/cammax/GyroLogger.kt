@@ -14,7 +14,7 @@ import java.io.BufferedWriter
 import java.util.Locale
 
 // Writes one Gyroflow .gcsv file per video clip, into Documents/CamMax.
-class GyroLogger(private val ctx: Context) : SensorEventListener {
+class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) : SensorEventListener {
 
     private class Sample(val ts: Long, val gx: Float, val gy: Float, val gz: Float,
                          val ax: Float, val ay: Float, val az: Float)
@@ -64,10 +64,17 @@ class GyroLogger(private val ctx: Context) : SensorEventListener {
                 w.write("GYROFLOW IMU LOG\n")
                 w.write("version,1.3\n")
                 w.write("id,cammax\n")
-                w.write("orientation,XYZ\n")
+                // Best guess for a back camera. If Gyroflow moves the wrong way, right-click its
+                // timeline and pick "Guess IMU orientation here".
+                w.write("orientation,YxZ\n")
                 w.write("note,video starts near t=1000 ms; run auto-sync\n")
                 w.write("vendor,samsung\n")
                 w.write("videofilename,$videoName\n")
+                val ro = readoutMs()
+                if (ro > 0f) {
+                    w.write(String.format(Locale.US, "frame_readout_time,%.3f\n", ro))
+                    w.write("frame_readout_direction,0\n")
+                }
                 w.write("tscale,0.001\n")
                 w.write("gscale,1.0\n")
                 w.write("ascale,0.101971621\n")

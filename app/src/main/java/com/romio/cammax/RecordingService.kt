@@ -164,7 +164,7 @@ class RecordingService : Service() {
         try { watchThermal() } catch (e: Exception) { log("thermal watch failed: $e") }
         if (cfg.gyro) {
             try {
-                val g = GyroLogger(this)
+                val g = GyroLogger(this) { p.readoutMs(readoutKey()) }
                 if (g.start()) gyro = g else { g.stop(); log("no gyroscope sensor") }
             } catch (e: Exception) { log("gyro start failed: $e") }
         }
@@ -259,8 +259,7 @@ class RecordingService : Service() {
         val req = dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(surface)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
-            // High-speed sessions reject stabilization and manual exposure.
-            if (!cfg.highSpeed) {
+            run {
                 val options = CameraCaps.stabOptions(this@RecordingService, cfg.cameraId)
                 var mode = if (cfg.stabMode == Stab.AUTO) CameraCaps.bestStab(options, cfg.width) else cfg.stabMode
                 if (mode !in options) mode = CameraCaps.bestStab(options, cfg.width)
@@ -287,6 +286,12 @@ class RecordingService : Service() {
         val frameCounter = object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
                 if (appliedStab.isEmpty()) {
+                    res.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { ns ->
+                        if (ns > 0) {
+                            p.setReadoutMs(readoutKey(), ns / 1e6f)
+                            log("sensor readout: %.2f ms".format(ns / 1e6))
+                        }
+                    }
                     val e = res.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)
                     val o = res.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
                     appliedStab = "electronic " + (when (e) { 2 -> "enhanced"; 1 -> "on"; 0 -> "off"; else -> "unknown" }) +
@@ -540,6 +545,8 @@ class RecordingService : Service() {
             Sidecars.write(this, s.name, j)
         } catch (_: Exception) {}
     }
+
+    private fun readoutKey() = "${cfg.cameraId}_${cfg.width}x${cfg.height}_${cfg.fps}_${cfg.highSpeed}"
 
     private fun measuredFps(): Double =
         if (frames < 2 || lastTs <= firstTs) 0.0

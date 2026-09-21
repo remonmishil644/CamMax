@@ -103,6 +103,7 @@ object CameraCaps {
     fun report(ctx: Context): String {
         val m = mgr(ctx)
         val sb = StringBuilder()
+        sb.append("${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})\n\n")
         val ids = m.cameraIdList.toMutableList()
         m.cameraIdList.forEach { id ->
             m.getCameraCharacteristics(id).physicalCameraIds.forEach { if (it !in ids) ids.add(it) }
@@ -143,8 +144,24 @@ object CameraCaps {
             sb.append("  Optical stabilization modes: ${ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.joinToString()}\n")
             sb.append("  High-speed: ${if (hs.isNullOrEmpty()) "none" else hs}\n")
             sb.append("  4K+ sizes: ${uhd ?: "none"}\n")
-            sb.append("  Capabilities: $caps\n\n")
+            sb.append("  Capabilities: $caps\n")
+            if (android.os.Build.VERSION.SDK_INT >= 31 && id in m.cameraIdList) {
+                val ext = try { m.getCameraExtensionCharacteristics(id).supportedExtensions.joinToString() }
+                          catch (_: Exception) { "error" }
+                sb.append("  Camera2 extensions: ${ext.ifEmpty { "none" }}\n")
+            }
+            sb.append("\n")
         }
+        // Samsung's hidden keys. A key with "stabil", "vdis" or "steady" in its name would be worth a test.
+        try {
+            val first = m.cameraIdList.firstOrNull()
+            if (first != null) {
+                val vendor = m.getCameraCharacteristics(first).availableCaptureRequestKeys
+                    .map { it.name }.filter { !it.startsWith("android.") }.sorted()
+                sb.append("Vendor request keys (${vendor.size}):\n")
+                vendor.forEach { sb.append("  $it\n") }
+            }
+        } catch (_: Exception) {}
         return sb.toString().trim()
     }
 

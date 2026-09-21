@@ -170,19 +170,56 @@
             android:layout_marginTop="6dp"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-        <com.google.android.material.button.MaterialButton android:id="@+id/walkBtn"
+        <com.google.android.material.button.MaterialButton android:id="@+id/gyroPresetBtn"
             style="@style/Widget.Material3.Button.TonalButton"
-            android:text="Apply walking preset"
+            android:text="Apply Gyroflow preset"
             android:minHeight="48dp"
             android:layout_marginTop="8dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" />
         <TextView
-            android:text="Sets the ultrawide lens, the strongest stabilization, and 60 fps. A wide view hides footstep shake best."
+            android:text="For walking. Keeps your lens, turns stabilization Off, sets 60 fps, and saves motion data. You stabilize the clip later in Gyroflow on the PC."
             android:textSize="13sp"
             android:textColor="@color/text_dim"
             android:lineSpacingMultiplier="1.25"
             android:layout_marginTop="4dp"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <!-- Dark mode -->
+        <TextView style="@style/CamMax.Section" android:text="Samsung camera, dark screen"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <com.google.android.material.card.MaterialCardView
+            style="@style/CamMax.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:text="Samsung keeps its own stabilization for its own camera. This mode opens Samsung's camera, then covers the screen in black after 5 seconds. Press a volume key to start and stop recording. Hold the black screen for 1 second to exit."
+                    android:textSize="14sp"
+                    android:textColor="@color/text"
+                    android:lineSpacingMultiplier="1.25"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+                <com.google.android.material.button.MaterialButton android:id="@+id/darkBtn"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:minHeight="48dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
+
+                <TextView
+                    android:text="The CamMax Dark icon on your home screen does the same in one tap. Your settings above do not apply in this mode: set UHD 60 and stabilization inside Samsung's camera."
+                    android:textSize="13sp"
+                    android:textColor="@color/text_dim"
+                    android:lineSpacingMultiplier="1.25"
+                    android:layout_marginTop="8dp"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Quality -->
         <TextView style="@style/CamMax.Section" android:text="Quality"

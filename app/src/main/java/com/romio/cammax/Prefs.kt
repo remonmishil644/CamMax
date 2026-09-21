@@ -108,5 +108,9 @@ class Prefs(ctx: Context) {
         sp.edit().putBoolean("m6", true).apply()
     }
 
+    // Sensor readout time per mode, measured by the camera. Gyroflow uses it to fix rolling shutter.
+    fun readoutMs(key: String): Float = sp.getFloat("readout_$key", 0f)
+    fun setReadoutMs(key: String, ms: Float) = sp.edit().putFloat("readout_$key", ms).apply()
+
     fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabMode, highSpeed, gyro)
 }

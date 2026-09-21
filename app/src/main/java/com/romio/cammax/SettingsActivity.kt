@@ -98,15 +98,27 @@ class SettingsActivity : AppCompatActivity() {
             changed()
         }
 
-        b.walkBtn.setOnClickListener {
-            lenses.firstOrNull { it.name == "Ultrawide" }?.let { p.cameraId = it.id }
-            p.stabMode = Stab.AUTO
+        b.gyroPresetBtn.setOnClickListener {
+            p.stabMode = Stab.OFF
             p.chipFps = 60
             p.highSpeed = false
+            p.gyro = true
+            b.gyroSwitch.isChecked = true
             b.customFps.setText("")
             buildLensChips()
             changed()
-            Toast.makeText(this, "Walking preset applied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Gyroflow preset applied", Toast.LENGTH_SHORT).show()
+        }
+        b.darkBtn.setOnClickListener {
+            if (Blackout.canRun(this)) {
+                Blackout.start(this)
+            } else {
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                } catch (_: Exception) {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+                }
+            }
         }
         b.testBtn.setOnClickListener { runTest() }
         b.advancedBtn.setOnClickListener {
@@ -219,7 +231,7 @@ class SettingsActivity : AppCompatActivity() {
             lens,
             if (p.hevc) "HEVC" else "H.264",
             "${p.bitrateMbps} Mbps",
-            if (p.stabMode != Stab.OFF && !p.highSpeed) "${Stab.label(p.stabMode).lowercase()} stabilization" else "no stabilization"
+            if (p.stabMode != Stab.OFF) "${Stab.label(p.stabMode).lowercase()} stabilization" else "no stabilization"
         ).joinToString("  ·  ")
 
         val bytesPerSec = (p.bitrateMbps * 1_000_000.0 + RecordingService.AUDIO_BPS) / 8
@@ -233,14 +245,14 @@ class SettingsActivity : AppCompatActivity() {
         b.storageText.text = "%.0f GB free  ·  room for about %s".format(free / 1e9, time)
 
         b.stabNote.text = when {
-            p.highSpeed -> "High-speed mode turns stabilization off."
             p.stabMode == Stab.ENHANCED -> "Strongest mode. Crops up to 20%. Android guarantees it only up to 1440p. At 4K the camera may refuse it, and CamMax then falls back to Optical."
             p.stabMode == Stab.ELECTRONIC -> "Software stabilization with a small crop. Android recommends this over mixing both."
             p.stabMode == Stab.BOTH -> "Lens and software together. Android warns they can fight each other and cause wobble."
-            p.stabMode == Stab.OPTICAL -> "Lens stabilization only. No crop. Good for standing still, weak for walking."
+            p.stabMode == Stab.OPTICAL -> "Lens stabilization only. No crop. Good for standing still, weak for walking." +
+                    (if (p.gyro) "\nGyroflow cannot use clips recorded with lens stabilization. For Gyroflow, pick Off." else "")
             else -> "No stabilization. Use on a tripod, or stabilize later in Gyroflow."
         } + if (p.gyro && p.stabMode in listOf(Stab.ELECTRONIC, Stab.BOTH, Stab.ENHANCED))
-            "\nGyroflow needs clips without electronic stabilization. For Gyroflow, pick Off or Optical." else ""
+            "\nGyroflow needs stabilization Off." else ""
 
         val opts = CameraCaps.fpsOptions(this, p.cameraId, Size(p.width, p.height))
         val chosen = opts.firstOrNull { it.fps == p.chipFps && it.highSpeed == p.highSpeed }
@@ -263,6 +275,7 @@ class SettingsActivity : AppCompatActivity() {
             RecordingService.State.STOPPING -> "Saving" to R.color.amber
         }
         b.statePill.text = label
+        b.darkBtn.text = if (Blackout.canRun(this)) "Start dark mode now" else "Allow display over other apps"
         TextViewCompat.setCompoundDrawableTintList(b.statePill,
             ColorStateList.valueOf(ContextCompat.getColor(this, color)))
         b.lastText.text = "Last: ${p.lastStatus}"
