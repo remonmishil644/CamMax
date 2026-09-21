@@ -77,6 +77,7 @@ class RecordingService : Service() {
     private var seq = 0
     private var clips = 0
     private var frames = 0L
+    private var settleTs = 0L
     private var firstTs = 0L
     private var lastTs = 0L
 
@@ -124,7 +125,7 @@ class RecordingService : Service() {
             finish("Storage full. Delete some files, then tap CamMax REC again.")
             return
         }
-        frames = 0; firstTs = 0; lastTs = 0
+        frames = 0; settleTs = 0; firstTs = 0; lastTs = 0
         val gen = ++openGen
         try {
             val seg = newSegment()
@@ -208,6 +209,9 @@ class RecordingService : Service() {
         val frameCounter = object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
                 val ts = res.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+                // Skip the first second while exposure settles.
+                if (settleTs == 0L) settleTs = ts
+                if (ts - settleTs < 1_000_000_000L) return
                 if (firstTs == 0L) firstTs = ts
                 lastTs = ts
                 frames++

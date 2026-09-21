@@ -57,6 +57,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("highSpeed", false)
         set(v) = sp.edit().putBoolean("highSpeed", v).apply()
 
+    var customFps: Int
+        get() = sp.getInt("customFps", 0)
+        set(v) = sp.edit().putInt("customFps", v).apply()
+
     var lastStatus: String
         get() = sp.getString("lastStatus", "No recordings yet") ?: ""
         set(v) = sp.edit().putString("lastStatus", v).apply()

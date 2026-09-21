@@ -37,6 +37,7 @@ class SettingsActivity : AppCompatActivity() {
         b.bitrateSeek.setOnSeekBarChangeListener(onSeek { updateLabels() })
         b.isoSeek.progress = p.iso
         b.isoSeek.setOnSeekBarChangeListener(onSeek { updateLabels() })
+        if (p.customFps > 0) b.customFps.setText(p.customFps.toString())
         b.hevcSwitch.isChecked = p.hevc
         b.stabilizeSwitch.isChecked = p.stabilize
         updateLabels()
@@ -88,7 +89,9 @@ class SettingsActivity : AppCompatActivity() {
         p.cameraId = mode.cameraId
         p.width = mode.width
         p.height = mode.height
-        p.fps = mode.fps
+        val custom = b.customFps.text.toString().toIntOrNull()?.takeIf { it in 1..960 } ?: 0
+        p.customFps = custom
+        p.fps = if (custom > 0) custom else mode.fps
         p.highSpeed = mode.highSpeed
         p.bitrateMbps = b.bitrateSeek.progress
         p.iso = b.isoSeek.progress

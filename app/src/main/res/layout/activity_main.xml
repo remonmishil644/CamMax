@@ -28,6 +28,12 @@
         <Spinner android:id="@+id/modeSpinner"
             android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
+        <EditText android:id="@+id/customFps"
+            android:hint="Custom fps test (blank = use the list)"
+            android:inputType="number" android:maxLength="3"
+            android:layout_marginTop="8dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
         <TextView android:id="@+id/bitrateLabel"
             android:layout_marginTop="12dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
