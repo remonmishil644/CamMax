@@ -13,6 +13,8 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        // Test builds install side by side with the real app.
+        if (project.hasProperty("idSuffix")) applicationIdSuffix = project.property("idSuffix") as String
     }
 
     // One fixed key, so every build installs over the last one and keeps its settings.
@@ -28,7 +30,7 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("fixed")
+            if (!project.hasProperty("debugKey")) signingConfig = signingConfigs.getByName("fixed")
         }
         release {
             isMinifyEnabled = false
