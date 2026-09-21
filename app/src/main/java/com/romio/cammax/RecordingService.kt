@@ -73,6 +73,8 @@ class RecordingService : Service() {
 
     private var gyro: GyroLogger? = null
     private var fallbackNote = ""
+    private var sessionId = ""
+    private var lastInterruption = ""
     private var lastStartId = 0
     private var openGen = 0
     private var rotation = 0
@@ -156,7 +158,8 @@ class RecordingService : Service() {
         p = Prefs(this)
         cfg = p.snapshot()
         camMgr = getSystemService(CAMERA_SERVICE) as CameraManager
-        startAttempts = 0; retries = 0; storageFull = false; clips = 0; fallbackNote = ""
+        startAttempts = 0; retries = 0; storageFull = false; clips = 0; fallbackNote = ""; lastInterruption = ""
+        sessionId = "S" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         log("begin: cam${cfg.cameraId} ${cfg.width}x${cfg.height}@${cfg.fps} " +
                 "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
                 "stab=${Stab.label(cfg.stabMode)}(${cfg.stabMode}) iso=${cfg.iso} autoStop=$autoStopMs")
@@ -412,6 +415,7 @@ class RecordingService : Service() {
                 teardown()
                 retries++
                 log("interrupted ($retries): $why")
+                lastInterruption = why
                 if (retries > 5) {
                     finish("Stopped after repeated errors ($why). Clips saved.")
                 } else {
@@ -510,6 +514,7 @@ class RecordingService : Service() {
         clips++
         log("clip closed: ${s.name} ${size / 1_000_000} MB ok=$ok")
         writeSidecar(s, if (ok) "complete" else "broken")
+        writePublicSidecar(s, ok)
     }
 
     private fun discardSegment(s: Segment) {
@@ -518,10 +523,7 @@ class RecordingService : Service() {
         Sidecars.delete(this, s.name)
     }
 
-    // Repair needs the exact encoder settings of each clip.
-    private fun writeSidecar(s: Segment, status: String) {
-        try {
-            val j = JSONObject().apply {
+    private fun clipJson(s: Segment, status: String) = JSONObject().apply {
                 put("name", s.name)
                 put("status", status)
                 put("cameraId", cfg.cameraId)
@@ -541,9 +543,37 @@ class RecordingService : Service() {
                 put("highSpeed", cfg.highSpeed)
                 put("startMs", s.startMs)
                 put("endMs", if (status == "recording") 0 else System.currentTimeMillis())
+    }
+
+    // Repair needs the exact encoder settings of each clip.
+    private fun writeSidecar(s: Segment, status: String) {
+        try { Sidecars.write(this, s.name, clipJson(s, status)) } catch (_: Exception) {}
+    }
+
+    // The PC editor reads this file. The contract is INTEGRATION.md in the project root: keep them in step.
+    private fun writePublicSidecar(s: Segment, ok: Boolean) {
+        try {
+            val base = s.name.removeSuffix(".mp4")
+            val j = clipJson(s, if (ok) "complete" else "broken").apply {
+                put("schema", "cammax.clip/1")
+                put("sessionId", sessionId)
+                put("clipIndex", clips)
+                put("videoFile", if (ok) s.name else base + "_broken.mp4")
+                put("gyroFile", if (cfg.gyro && gyro != null) "$base.gcsv" else JSONObject.NULL)
+                put("gyroPreRollMs", 1000)
+                put("readoutMs", p.readoutMs(readoutKey()).toDouble())
+                put("thermalStatus", thermal)
+                put("interruption", lastInterruption)
+                put("device", Build.MODEL)
             }
-            Sidecars.write(this, s.name, j)
-        } catch (_: Exception) {}
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "$base.json")
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Documents/CamMax")
+            }
+            val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return
+            contentResolver.openOutputStream(uri)?.use { it.write(j.toString(2).toByteArray()) }
+        } catch (e: Exception) { log("public sidecar failed: $e") }
     }
 
     private fun readoutKey() = "${cfg.cameraId}_${cfg.width}x${cfg.height}_${cfg.fps}_${cfg.highSpeed}"

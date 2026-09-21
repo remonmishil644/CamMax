@@ -44,6 +44,12 @@ A Kotlin Android app (Camera2 + MediaRecorder, minSdk 29, targetSdk 34). Two lau
 - `Blackout.kt` — dark mode (activity + overlay service).
 - `EventLog.kt` — in-app event log (`files/events.log`), vibration helper, `App` class with crash logging.
 
+## Integration with the PC editor
+`INTEGRATION.md` is the file contract with Romio's PC video editor (`F:\Video edit`): file names, the
+`cammax.clip/1` sidecar JSON written to `Documents/CamMax`, sessions, gyro pre-roll. Any change to what CamMax
+writes must update `INTEGRATION.md` first, bump the schema version, and be re-copied to
+`F:\Video edit\CAMMAX_INTEGRATION.md`.
+
 ## Rules for this project
 - Nothing can be run here: no device, no emulator. CI green only means "compiles". Say so in every report.
 - Any bug: get the in-app event log first (Show advanced → Event log → Copy). Do not guess twice.
