@@ -57,6 +57,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("highSpeed", false)
         set(v) = sp.edit().putBoolean("highSpeed", v).apply()
 
+    // The chip choice. `fps` is what the recorder uses: customFps when set, else chipFps.
+    var chipFps: Int
+        get() = sp.getInt("chipFps", if (customFps == 0) fps else 60)
+        set(v) = sp.edit().putInt("chipFps", v).apply()
+
     var customFps: Int
         get() = sp.getInt("customFps", 0)
         set(v) = sp.edit().putInt("customFps", v).apply()
@@ -64,6 +69,17 @@ class Prefs(ctx: Context) {
     var lastStatus: String
         get() = sp.getString("lastStatus", "No recordings yet") ?: ""
         set(v) = sp.edit().putString("lastStatus", v).apply()
+
+    // Build 6: the 80 fps test proved 60 is the ceiling, so drop the leftover custom value once.
+    fun migrate() {
+        if (sp.getBoolean("m6", false)) return
+        if (customFps > 60 && !highSpeed) {
+            customFps = 0
+            fps = 60
+            chipFps = 60
+        }
+        sp.edit().putBoolean("m6", true).apply()
+    }
 
     fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabilize, highSpeed)
 }

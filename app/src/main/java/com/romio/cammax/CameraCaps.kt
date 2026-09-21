@@ -4,83 +4,90 @@ import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.MediaRecorder
+import android.util.Size
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
-data class CamInfo(val id: String, val label: String)
+data class Lens(val id: String, val name: String, val detail: String)
 
-data class CamMode(
-    val cameraId: String,
-    val width: Int,
-    val height: Int,
-    val fps: Int,
-    val guaranteed: Boolean,
-    val highSpeed: Boolean = false,
-    val probe: Boolean = false
-) {
-    override fun toString() = "${width}x$height @ ${fps} fps" + when {
-        highSpeed -> "   (high-speed)"
-        probe -> "   (test: not listed)"
-        !guaranteed -> "   (not guaranteed)"
-        else -> ""
-    }
-}
+data class FpsOption(val fps: Int, val highSpeed: Boolean, val listed: Boolean)
 
 object CameraCaps {
-    fun rearCameras(ctx: Context): List<CamInfo> {
-        val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        return mgr.cameraIdList.mapNotNull { id ->
-            val ch = mgr.getCameraCharacteristics(id)
+
+    private fun mgr(ctx: Context) = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    fun lenses(ctx: Context): List<Lens> {
+        val m = mgr(ctx)
+        val raw = m.cameraIdList.mapNotNull { id ->
+            val ch = m.getCameraCharacteristics(id)
             if (ch.get(CameraCharacteristics.LENS_FACING) != CameraCharacteristics.LENS_FACING_BACK) {
                 return@mapNotNull null
             }
             val f = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
-            CamInfo(id, if (f != null) "Camera $id  (%.1f mm)".format(f) else "Camera $id")
+            val s = ch.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            val equiv = if (f != null && s != null) {
+                (f * 43.27 / sqrt((s.width * s.width + s.height * s.height).toDouble())).roundToInt()
+            } else 0
+            id to equiv
+        }
+        return raw.map { (id, equiv) ->
+            val name = when {
+                equiv == 0 -> "Camera $id"
+                equiv < 20 -> "Ultrawide"
+                equiv <= 35 -> "Main"
+                else -> "Tele"
+            }
+            Lens(id, name, if (equiv > 0) "$equiv mm" else "")
         }
     }
 
-    fun modes(ctx: Context, cameraId: String): List<CamMode> {
-        val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val ch = mgr.getCameraCharacteristics(cameraId)
-        val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return emptyList()
-        val ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList()
-            ?: emptyList()
-        val fpsList = ranges.flatMap { listOf(it.lower, it.upper) }
-            .filter { it >= 24 }.distinct().sortedDescending()
-        val sizes = map.getOutputSizes(MediaRecorder::class.java)
-            ?.filter { it.width >= 1280 && it.width * 9 == it.height * 16 }
-            ?.sortedByDescending { it.width }
-            ?: emptyList()
+    fun sizes(ctx: Context, cameraId: String): List<Size> {
+        val map = mgr(ctx).getCameraCharacteristics(cameraId)
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return emptyList()
+        val normal = map.getOutputSizes(MediaRecorder::class.java)?.toList() ?: emptyList()
+        return normal
+            .filter { it.width * 9 == it.height * 16 && it.width in STANDARD_WIDTHS }
+            .distinct()
+            .sortedByDescending { it.width }
+    }
 
-        val normal = sizes.flatMap { s ->
-            val minDur = map.getOutputMinFrameDuration(MediaRecorder::class.java, s)
-            val safeFps = if (minDur > 0) (1_000_000_000L / minDur).toInt() else 30
-            val listed = fpsList.map { fps ->
-                CamMode(cameraId, s.width, s.height, fps, fps <= safeFps + 1)
-            }
-            val probe = if ((s.width == 3840 || s.width == 1920) && 60 !in fpsList)
-                listOf(CamMode(cameraId, s.width, s.height, 60, false, probe = true))
-            else emptyList()
-            probe + listed
-        }
+    fun sizeLabel(w: Int, h: Int) = when (w) {
+        7680 -> "8K"
+        3840 -> "4K"
+        2560 -> "1440p"
+        1920 -> "1080p"
+        1280 -> "720p"
+        else -> "${w}x$h"
+    }
 
-        val high = (map.highSpeedVideoSizes ?: emptyArray()).flatMap { s ->
-            map.getHighSpeedVideoFpsRangesFor(s)
-                .filter { it.lower == it.upper }
-                .map { it.upper }.distinct().sortedDescending()
-                .map { fps -> CamMode(cameraId, s.width, s.height, fps, true, highSpeed = true) }
-        }.sortedWith(compareByDescending<CamMode> { it.width }.thenByDescending { it.fps })
-
-        return normal + high
+    // Samsung lists only 24 and 30 fps, but it delivers 60 when asked. So 60 is always offered.
+    fun fpsOptions(ctx: Context, cameraId: String, size: Size): List<FpsOption> {
+        val ch = mgr(ctx).getCameraCharacteristics(cameraId)
+        val listed = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            ?.flatMap { listOf(it.lower, it.upper) }
+            ?.filter { it >= 24 }?.distinct() ?: emptyList()
+        val normal = (listed + 60).distinct().map { FpsOption(it, false, it in listed) }
+        val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val high = try {
+            if (map != null && map.highSpeedVideoSizes.any { it == size }) {
+                map.getHighSpeedVideoFpsRangesFor(size)
+                    .filter { it.lower == it.upper }.map { it.upper }.distinct()
+                    .filter { hs -> normal.none { it.fps == hs } }
+                    .map { FpsOption(it, true, true) }
+            } else emptyList()
+        } catch (_: Exception) { emptyList() }
+        return (normal + high).sortedBy { it.fps }
     }
 
     fun report(ctx: Context): String {
-        val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val m = mgr(ctx)
         val sb = StringBuilder()
-        val ids = mgr.cameraIdList.toMutableList()
-        mgr.cameraIdList.forEach { id ->
-            mgr.getCameraCharacteristics(id).physicalCameraIds.forEach { if (it !in ids) ids.add(it) }
+        val ids = m.cameraIdList.toMutableList()
+        m.cameraIdList.forEach { id ->
+            m.getCameraCharacteristics(id).physicalCameraIds.forEach { if (it !in ids) ids.add(it) }
         }
         for (id in ids) {
-            val ch = try { mgr.getCameraCharacteristics(id) } catch (_: Exception) { continue }
+            val ch = try { m.getCameraCharacteristics(id) } catch (_: Exception) { continue }
             val facing = when (ch.get(CameraCharacteristics.LENS_FACING)) {
                 CameraCharacteristics.LENS_FACING_BACK -> "back"
                 CameraCharacteristics.LENS_FACING_FRONT -> "front"
@@ -117,4 +124,6 @@ object CameraCaps {
         }
         return sb.toString().trim()
     }
+
+    private val STANDARD_WIDTHS = setOf(7680, 3840, 2560, 1920, 1280)
 }

@@ -8,12 +8,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
     <application
+        android:name=".App"
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_menu_camera"
+        android:icon="@mipmap/ic_app"
         android:label="CamMax"
         android:supportsRtl="true"
         android:theme="@style/Theme.CamMax">
@@ -22,6 +24,8 @@
             android:name=".SettingsActivity"
             android:exported="true"
             android:label="CamMax"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

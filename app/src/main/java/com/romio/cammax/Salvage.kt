@@ -32,8 +32,9 @@ object Sidecars {
 
 // MediaStore deletes IS_PENDING rows after ~7 days, so crash leftovers must be un-pended to survive.
 object Salvage {
-    fun run(ctx: Context): Int {
-        if (RecordingService.state != RecordingService.State.IDLE) return 0
+    // force = the recorder itself calls this before it creates its first clip.
+    fun run(ctx: Context, force: Boolean = false): Int {
+        if (!force && RecordingService.state != RecordingService.State.IDLE) return 0
         val cr = ctx.contentResolver
         val coll = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
@@ -65,7 +66,7 @@ object Salvage {
                     cr.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
                 } catch (_: Exception) { -1L }
                 if (size == 0L) {
-                    cr.delete(uri, null, null)
+                    try { cr.delete(uri, null, null) } catch (_: Exception) {}
                     Sidecars.delete(ctx, name)
                     continue
                 }

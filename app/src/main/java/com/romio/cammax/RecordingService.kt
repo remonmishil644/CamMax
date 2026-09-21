@@ -28,12 +28,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.StatFs
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Range
 import org.json.JSONObject
@@ -57,6 +56,7 @@ class RecordingService : Service() {
 
     private val camThread = HandlerThread("cammax").apply { start() }
     private val h = Handler(camThread.looper)
+    private val main = Handler(Looper.getMainLooper())
     private val exec = Executor { h.post(it) }
 
     private lateinit var camMgr: CameraManager
@@ -69,10 +69,15 @@ class RecordingService : Service() {
     private var current: Segment? = null
     private var next: Segment? = null
     private var wake: PowerManager.WakeLock? = null
+    private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
+    private var lastStartId = 0
     private var openGen = 0
     private var rotation = 0
+    private var startAttempts = 0
     private var retries = 0
+    private var autoStopMs = 0L
+    private var thermal = 0
     private var storageFull = false
     private var seq = 0
     private var clips = 0
@@ -81,19 +86,36 @@ class RecordingService : Service() {
     private var firstTs = 0L
     private var lastTs = 0L
 
-    private val retryRunnable = Runnable { if (state == State.RECORDING) openAndRecord() }
-    private val watchdog = Runnable { if (state == State.STARTING) finish("Camera did not start") }
+    private val retryRunnable = Runnable {
+        if (state == State.RECORDING || state == State.STARTING) openAndRecord()
+    }
+    private val watchdog = Runnable {
+        if (state == State.STARTING) finish("Camera did not start within 15 s")
+    }
+    private val autoStop = Runnable {
+        if (state == State.RECORDING) { state = State.STOPPING; finish(null) }
+    }
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
             ACTION_START -> {
-                goForeground()
+                if (!goForeground()) {
+                    Prefs(this).lastStatus = "Android refused to start the camera service. Open CamMax and try again."
+                    Buzz.error(this)
+                    if (state == State.IDLE) stopSelfResult(startId)
+                    return START_NOT_STICKY
+                }
                 if (state == State.IDLE) {
                     state = State.STARTING
+                    active = this
+                    autoStopMs = intent.getLongExtra(EXTRA_AUTO_STOP_MS, 0L)
                     acquireWake()
                     h.post { begin() }
+                } else {
+                    log("start ignored: state=$state")
                 }
             }
             ACTION_STOP -> {
@@ -101,9 +123,10 @@ class RecordingService : Service() {
                     state = State.STOPPING
                     h.post { finish(null) }
                 } else if (state == State.IDLE) {
-                    stopSelf()
+                    stopSelfResult(startId)
                 }
             }
+            else -> if (state == State.IDLE) stopSelfResult(startId)
         }
         return START_NOT_STICKY
     }
@@ -112,8 +135,13 @@ class RecordingService : Service() {
         p = Prefs(this)
         cfg = p.snapshot()
         camMgr = getSystemService(CAMERA_SERVICE) as CameraManager
-        retries = 0; storageFull = false; clips = 0
-        h.postDelayed(watchdog, 10_000)
+        startAttempts = 0; retries = 0; storageFull = false; clips = 0
+        log("begin: cam${cfg.cameraId} ${cfg.width}x${cfg.height}@${cfg.fps} " +
+                "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
+                "stab=${cfg.stabilize} iso=${cfg.iso} autoStop=$autoStopMs")
+        try { Salvage.run(this, force = true) } catch (e: Exception) { log("salvage failed: $e") }
+        watchThermal()
+        h.postDelayed(watchdog, 15_000)
         detectRotation { rot ->
             rotation = rot
             openAndRecord()
@@ -134,6 +162,7 @@ class RecordingService : Service() {
             camMgr.openCamera(cfg.cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(dev: CameraDevice) {
                     if (gen != openGen) { dev.close(); return }
+                    log("camera opened")
                     camera = dev
                     configure(dev, gen)
                 }
@@ -147,10 +176,10 @@ class RecordingService : Service() {
                 }
             }, h)
         } catch (e: SecurityException) {
+            log("open failed: $e")
             finish("Camera permission missing. Open CamMax and allow it.")
         } catch (e: Exception) {
-            if (state == State.STARTING) finish("Could not start: ${e.message}")
-            else interrupted("restart failed: ${e.message}")
+            interrupted("open failed: ${e.javaClass.simpleName} ${e.message}")
         }
     }
 
@@ -220,35 +249,44 @@ class RecordingService : Service() {
 
         val sessionType = if (cfg.highSpeed) SessionConfiguration.SESSION_HIGH_SPEED
                           else SessionConfiguration.SESSION_REGULAR
-        dev.createCaptureSession(SessionConfiguration(
-            sessionType,
-            listOf(OutputConfiguration(surface)), exec,
-            object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(s: CameraCaptureSession) {
-                    if (gen != openGen) { s.close(); return }
-                    session = s
-                    try {
-                        if (s is CameraConstrainedHighSpeedCaptureSession) {
-                            s.setRepeatingBurst(s.createHighSpeedRequestList(req), frameCounter, h)
-                        } else {
-                            s.setRepeatingRequest(req, frameCounter, h)
+        try {
+            dev.createCaptureSession(SessionConfiguration(
+                sessionType,
+                listOf(OutputConfiguration(surface)), exec,
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(s: CameraCaptureSession) {
+                        if (gen != openGen) { s.close(); return }
+                        session = s
+                        try {
+                            if (s is CameraConstrainedHighSpeedCaptureSession) {
+                                s.setRepeatingBurst(s.createHighSpeedRequestList(req), frameCounter, h)
+                            } else {
+                                s.setRepeatingRequest(req, frameCounter, h)
+                            }
+                            rec.start()
+                        } catch (e: Exception) {
+                            interrupted("recorder refused ${cfg.width}x${cfg.height} @ ${cfg.fps} fps: ${e.message}")
+                            return
                         }
-                        rec.start()
-                    } catch (e: Exception) {
-                        finish("Could not record ${cfg.width}x${cfg.height} @ ${cfg.fps} fps: ${e.message}")
-                        return
+                        h.removeCallbacks(watchdog)
+                        if (state == State.STARTING) {
+                            recordingSince = SystemClock.elapsedRealtime()
+                            state = State.RECORDING
+                            Buzz.started(this@RecordingService)
+                            if (autoStopMs > 0) h.postDelayed(autoStop, autoStopMs)
+                        }
+                        log("recording")
+                        p.lastStatus = "Recording ${cfg.width}x${cfg.height} @ ${cfg.fps} fps"
                     }
-                    h.removeCallbacks(watchdog)
-                    if (state == State.STARTING) {
-                        state = State.RECORDING
-                        vibrate(600)
+                    override fun onConfigureFailed(s: CameraCaptureSession) {
+                        if (gen == openGen) {
+                            interrupted("camera refused ${cfg.width}x${cfg.height} @ ${cfg.fps} fps")
+                        }
                     }
-                    p.lastStatus = "Recording ${cfg.width}x${cfg.height} @ ${cfg.fps} fps"
-                }
-                override fun onConfigureFailed(s: CameraCaptureSession) {
-                    if (gen == openGen) finish("Camera refused ${cfg.width}x${cfg.height} @ ${cfg.fps} fps")
-                }
-            }))
+                }))
+        } catch (e: Exception) {
+            interrupted("session failed: ${e.javaClass.simpleName} ${e.message}")
+        }
     }
 
     private fun onInfo(what: Int) {
@@ -277,18 +315,30 @@ class RecordingService : Service() {
         }
     }
 
-    // Save what exists, then try to keep recording.
+    // Save what exists, then try again: up to 3 times while starting, 5 times while recording.
     private fun interrupted(reason: String) {
-        if (state == State.STARTING) { finish("Could not start: $reason"); return }
-        if (state != State.RECORDING) return
-        teardown()
-        retries++
-        if (retries > 5) {
-            finish("Stopped after repeated errors ($reason). Clips saved.")
-            return
+        val why = if (thermal >= PowerManager.THERMAL_STATUS_SEVERE) "$reason (phone is hot)" else reason
+        when (state) {
+            State.STARTING -> {
+                teardown()
+                startAttempts++
+                log("start attempt $startAttempts failed: $why")
+                if (startAttempts >= 3) finish("Could not start: $why")
+                else h.postDelayed(retryRunnable, 800)
+            }
+            State.RECORDING -> {
+                teardown()
+                retries++
+                log("interrupted ($retries): $why")
+                if (retries > 5) {
+                    finish("Stopped after repeated errors ($why). Clips saved.")
+                } else {
+                    p.lastStatus = "Interrupted ($why). Saved and resumed."
+                    h.postDelayed(retryRunnable, 2_000)
+                }
+            }
+            else -> {}
         }
-        p.lastStatus = "Interrupted ($reason). Saved and resumed."
-        h.postDelayed(retryRunnable, 2_000)
     }
 
     private fun teardown() {
@@ -310,21 +360,28 @@ class RecordingService : Service() {
 
     private fun finish(error: String?) {
         h.removeCallbacks(watchdog)
+        h.removeCallbacks(autoStop)
         val fps = measuredFps()
         teardown()
-        state = State.IDLE
         val got = if (fps > 0) ", measured %.1f fps".format(fps) else ""
         if (error == null) {
-            vibrate(120)
+            Buzz.stopped(this)
             p.lastStatus = "Saved $clips clip(s) to DCIM/CamMax. " +
                     "${cfg.width}x${cfg.height}, asked ${cfg.fps} fps$got."
         } else {
-            vibrateError()
+            Buzz.error(this)
             p.lastStatus = error + got
         }
-        releaseWake()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        log("finish: ${error ?: "ok"} clips=$clips$got")
+        unwatchThermal()
+        state = State.IDLE
+        // stopSelfResult keeps the service alive when a newer start is already queued.
+        main.post {
+            if (state == State.IDLE) {
+                releaseWake()
+                stopSelfResult(lastStartId)
+            }
+        }
     }
 
     private fun newSegment(): Segment {
@@ -359,6 +416,7 @@ class RecordingService : Service() {
         }
         try { contentResolver.update(s.uri, v, null, null) } catch (_: Exception) {}
         clips++
+        log("clip closed: ${s.name} ${size / 1_000_000} MB ok=$ok")
         writeSidecar(s, if (ok) "complete" else "broken")
     }
 
@@ -368,7 +426,7 @@ class RecordingService : Service() {
         Sidecars.delete(this, s.name)
     }
 
-    // Repair (next build) needs the exact encoder settings of each clip.
+    // Repair needs the exact encoder settings of each clip.
     private fun writeSidecar(s: Segment, status: String) {
         try {
             val j = JSONObject().apply {
@@ -436,7 +494,7 @@ class RecordingService : Service() {
         return (sensor + deviceDeg) % 360
     }
 
-    private fun goForeground() {
+    private fun goForeground(): Boolean = try {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CH, "Recording", NotificationManager.IMPORTANCE_MIN).apply {
@@ -455,9 +513,31 @@ class RecordingService : Service() {
         } else {
             startForeground(1, n)
         }
+        true
+    } catch (e: Exception) {
+        log("startForeground failed: $e")
+        false
+    }
+
+    private fun watchThermal() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        thermal = pm.currentThermalStatus
+        val l = PowerManager.OnThermalStatusChangedListener { status ->
+            thermal = status
+            log("thermal status $status")
+        }
+        thermalListener = l
+        pm.addThermalStatusListener(exec, l)
+    }
+
+    private fun unwatchThermal() {
+        val l = thermalListener ?: return
+        try { (getSystemService(POWER_SERVICE) as PowerManager).removeThermalStatusListener(l) } catch (_: Exception) {}
+        thermalListener = null
     }
 
     private fun acquireWake() {
+        if (wake?.isHeld == true) return
         wake = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CamMax:rec").apply {
                 setReferenceCounted(false)
@@ -470,21 +550,16 @@ class RecordingService : Service() {
         wake = null
     }
 
-    private fun vibrator(): Vibrator =
-        if (Build.VERSION.SDK_INT >= 31)
-            (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        else @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
-
-    private fun vibrate(ms: Long) =
-        vibrator().vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
-
-    private fun vibrateError() =
-        vibrator().vibrate(VibrationEffect.createWaveform(longArrayOf(0, 90, 110, 90, 110, 90), -1))
+    private fun log(msg: String) = EventLog.add(this, msg)
 
     override fun onDestroy() {
-        if (state != State.IDLE) {
-            try { teardown() } catch (_: Exception) {}
-            state = State.IDLE
+        if (active === this) {
+            if (state != State.IDLE) {
+                log("service destroyed while $state")
+                try { teardown() } catch (_: Exception) {}
+                state = State.IDLE
+            }
+            active = null
         }
         releaseWake()
         camThread.quitSafely()
@@ -495,8 +570,11 @@ class RecordingService : Service() {
         const val CH = "cammax_silent"
         const val ACTION_START = "com.romio.cammax.START"
         const val ACTION_STOP = "com.romio.cammax.STOP"
-        const val AUDIO_BPS = 192_000
+        const val EXTRA_AUTO_STOP_MS = "autoStopMs"
+        const val AUDIO_BPS = 256_000
         const val SEGMENT_SECONDS = 120L
         @Volatile var state = State.IDLE
+        @Volatile var recordingSince = 0L
+        @Volatile private var active: RecordingService? = null
     }
 }
