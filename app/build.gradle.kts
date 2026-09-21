@@ -15,10 +15,24 @@ android {
         versionName = "1.0"
     }
 
+    // One fixed key, so every build installs over the last one and keeps its settings.
+    signingConfigs {
+        create("fixed") {
+            storeFile = rootProject.file("cammax.p12")
+            storeType = "pkcs12"
+            storePassword = "cammax-sideload"
+            keyAlias = "cammax"
+            keyPassword = "cammax-sideload"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
 

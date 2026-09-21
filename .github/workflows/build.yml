@@ -4,6 +4,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,8 +26,22 @@ jobs:
           echo "$GITHUB_WORKSPACE/gradle-8.7/bin" >> $GITHUB_PATH
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Verify APK
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk CamMax.apk
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          "$BT/apksigner" verify --verbose --print-certs CamMax.apk
+          "$BT/aapt2" dump badging CamMax.apk | head -20
+          ls -l CamMax.apk
+          sha256sum CamMax.apk
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: CamMax-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: CamMax.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: CamMax build ${{ github.run_number }}
+          files: CamMax.apk
+          make_latest: true
