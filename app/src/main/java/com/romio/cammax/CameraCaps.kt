@@ -79,6 +79,26 @@ object CameraCaps {
         return (normal + high).sortedBy { it.fps }
     }
 
+    // Android advises against OIS and EIS together, so the automatic pick never chooses BOTH.
+    fun stabOptions(ctx: Context, cameraId: String): List<Int> {
+        val ch = try { mgr(ctx).getCameraCharacteristics(cameraId) } catch (_: Exception) { return listOf(Stab.OFF) }
+        val eis = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0)
+        val ois = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: IntArray(0)
+        val out = mutableListOf(Stab.OFF)
+        if (1 in ois) out.add(Stab.OPTICAL)
+        if (1 in eis) out.add(Stab.ELECTRONIC)
+        if (1 in ois && 1 in eis) out.add(Stab.BOTH)
+        if (2 in eis) out.add(Stab.ENHANCED)
+        return out
+    }
+
+    fun bestStab(options: List<Int>) = when {
+        Stab.ENHANCED in options -> Stab.ENHANCED
+        Stab.ELECTRONIC in options -> Stab.ELECTRONIC
+        Stab.OPTICAL in options -> Stab.OPTICAL
+        else -> Stab.OFF
+    }
+
     fun report(ctx: Context): String {
         val m = mgr(ctx)
         val sb = StringBuilder()
@@ -118,6 +138,8 @@ object CameraCaps {
                 }
             sb.append("Camera $id ($facing, $level, ${focal}mm)\n")
             sb.append("  AE fps: $ae\n")
+            sb.append("  Video stabilization modes: ${ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.joinToString()}\n")
+            sb.append("  Optical stabilization modes: ${ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.joinToString()}\n")
             sb.append("  High-speed: ${if (hs.isNullOrEmpty()) "none" else hs}\n")
             sb.append("  4K+ sizes: ${uhd ?: "none"}\n")
             sb.append("  Capabilities: $caps\n\n")

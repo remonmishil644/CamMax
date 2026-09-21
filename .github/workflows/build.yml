@@ -36,17 +36,6 @@ jobs:
           "$BT/aapt2" dump badging CamMax.apk | head -20
           ls -l CamMax.apk
           sha256sum CamMax.apk
-      - name: Build install-test variants
-        run: |
-          BT="$ANDROID_HOME/build-tools/34.0.0"
-          gradle assembleDebug --no-daemon -PdebugKey -PidSuffix=.testb
-          cp app/build/outputs/apk/debug/app-debug.apk CamMax-test-B.apk
-          git worktree add old 9f26819
-          cp app/build.gradle.kts old/app/build.gradle.kts
-          cp cammax.p12 old/cammax.p12
-          (cd old && gradle assembleDebug --no-daemon -PidSuffix=.testa)
-          cp old/app/build/outputs/apk/debug/app-debug.apk CamMax-test-A.apk
-          for f in CamMax-test-A.apk CamMax-test-B.apk; do "$BT/apksigner" verify --print-certs $f | head -3; ls -l $f; done
       - uses: actions/upload-artifact@v4
         with:
           name: CamMax-debug-apk
@@ -56,8 +45,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: CamMax build ${{ github.run_number }}
-          files: |
-            CamMax.apk
-            CamMax-test-A.apk
-            CamMax-test-B.apk
+          files: CamMax.apk
           make_latest: true

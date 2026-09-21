@@ -10,9 +10,26 @@ data class Config(
     val bitrateMbps: Int,
     val iso: Int,
     val hevc: Boolean,
-    val stabilize: Boolean,
+    val stabMode: Int,
     val highSpeed: Boolean
 )
+
+object Stab {
+    const val AUTO = -1
+    const val OFF = 0
+    const val OPTICAL = 1
+    const val ELECTRONIC = 2
+    const val BOTH = 3
+    const val ENHANCED = 4
+
+    fun label(mode: Int) = when (mode) {
+        OPTICAL -> "Optical"
+        ELECTRONIC -> "Electronic"
+        BOTH -> "Optical + electronic"
+        ENHANCED -> "Enhanced"
+        else -> "Off"
+    }
+}
 
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("cammax", Context.MODE_PRIVATE)
@@ -53,6 +70,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("stabilize", true)
         set(v) = sp.edit().putBoolean("stabilize", v).apply()
 
+    // Older builds stored an on/off switch: off stays off, on becomes "pick the best mode".
+    var stabMode: Int
+        get() = sp.getInt("stabMode", if (stabilize) Stab.AUTO else Stab.OFF)
+        set(v) = sp.edit().putInt("stabMode", v).apply()
+
     var highSpeed: Boolean
         get() = sp.getBoolean("highSpeed", false)
         set(v) = sp.edit().putBoolean("highSpeed", v).apply()
@@ -81,5 +103,5 @@ class Prefs(ctx: Context) {
         sp.edit().putBoolean("m6", true).apply()
     }
 
-    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabilize, highSpeed)
+    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabMode, highSpeed)
 }

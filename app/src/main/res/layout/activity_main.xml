@@ -156,6 +156,34 @@
             android:layout_marginTop="6dp"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
 
+        <!-- Stabilization -->
+        <TextView style="@style/CamMax.Section" android:text="Stabilization"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <com.google.android.material.chip.ChipGroup android:id="@+id/stabChips"
+            app:singleSelection="true" app:selectionRequired="true"
+            app:chipSpacingHorizontal="8dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/stabNote"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            android:lineSpacingMultiplier="1.25"
+            android:layout_marginTop="6dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <com.google.android.material.button.MaterialButton android:id="@+id/walkBtn"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:text="Apply walking preset"
+            android:minHeight="48dp"
+            android:layout_marginTop="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <TextView
+            android:text="Sets the ultrawide lens, the strongest stabilization, and 60 fps. A wide view hides footstep shake best."
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            android:lineSpacingMultiplier="1.25"
+            android:layout_marginTop="4dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
         <!-- Quality -->
         <TextView style="@style/CamMax.Section" android:text="Quality"
             android:layout_width="wrap_content" android:layout_height="wrap_content" />
@@ -182,12 +210,6 @@
                     android:valueFrom="10" android:valueTo="300" android:stepSize="5"
                     app:labelBehavior="gone"
                     app:tickVisible="false"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/stabilizeSwitch"
-                    android:text="Stabilization"
-                    android:textSize="15sp"
-                    android:minHeight="56dp"
                     android:layout_width="match_parent" android:layout_height="wrap_content" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/hevcSwitch"

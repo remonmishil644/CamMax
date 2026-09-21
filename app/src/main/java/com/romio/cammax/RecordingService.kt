@@ -85,6 +85,7 @@ class RecordingService : Service() {
     private var framesSeen = -1L
     private var stalls = 0
     private var settleTs = 0L
+    @Volatile private var appliedStab = ""
     private var firstTs = 0L
     private var lastTs = 0L
 
@@ -156,7 +157,7 @@ class RecordingService : Service() {
         startAttempts = 0; retries = 0; storageFull = false; clips = 0
         log("begin: cam${cfg.cameraId} ${cfg.width}x${cfg.height}@${cfg.fps} " +
                 "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
-                "stab=${cfg.stabilize} iso=${cfg.iso} autoStop=$autoStopMs")
+                "stab=${Stab.label(cfg.stabMode)}(${cfg.stabMode}) iso=${cfg.iso} autoStop=$autoStopMs")
         try { Salvage.run(this, force = true) } catch (e: Exception) { log("salvage failed: $e") }
         try { watchThermal() } catch (e: Exception) { log("thermal watch failed: $e") }
         h.removeCallbacks(stallCheck)
@@ -178,7 +179,7 @@ class RecordingService : Service() {
             finish("Storage full. Delete some files, then tap CamMax REC again.")
             return
         }
-        frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
+        appliedStab = ""; frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
         val gen = ++openGen
         try {
             val seg = newSegment()
@@ -249,17 +250,20 @@ class RecordingService : Service() {
             addTarget(surface)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
             // High-speed sessions reject stabilization and manual exposure.
-            if (cfg.stabilize && !cfg.highSpeed) {
-                val eis = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
-                if (eis != null && CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON in eis) {
-                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                        CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+            if (!cfg.highSpeed) {
+                val options = CameraCaps.stabOptions(this@RecordingService, cfg.cameraId)
+                var mode = if (cfg.stabMode == Stab.AUTO) CameraCaps.bestStab(options) else cfg.stabMode
+                if (mode !in options) mode = CameraCaps.bestStab(options)
+                val eisList = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0)
+                val oisList = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: IntArray(0)
+                val eis = when (mode) { Stab.ENHANCED -> 2; Stab.ELECTRONIC, Stab.BOTH -> 1; else -> 0 }
+                if (eis in eisList) set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, eis)
+                // Enhanced mode lets the camera drive OIS itself, so leave OIS untouched there.
+                if (mode != Stab.ENHANCED) {
+                    val ois = if (mode == Stab.OPTICAL || mode == Stab.BOTH) 1 else 0
+                    if (ois in oisList) set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, ois)
                 }
-                val ois = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
-                if (ois != null && CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON in ois) {
-                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                        CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON)
-                }
+                log("stabilization asked: ${Stab.label(mode)}")
             }
             if (cfg.iso > 0 && !cfg.highSpeed) {
                 val range = ch.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
@@ -272,6 +276,13 @@ class RecordingService : Service() {
 
         val frameCounter = object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
+                if (appliedStab.isEmpty()) {
+                    val e = res.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)
+                    val o = res.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
+                    appliedStab = "electronic " + (when (e) { 2 -> "enhanced"; 1 -> "on"; 0 -> "off"; else -> "unknown" }) +
+                            ", optical " + (when (o) { 1 -> "on"; 0 -> "off"; else -> "unknown" })
+                    log("stabilization applied by camera: $appliedStab")
+                }
                 val ts = res.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
                 // Skip the first second while exposure settles.
                 if (settleTs == 0L) settleTs = ts
@@ -400,8 +411,9 @@ class RecordingService : Service() {
         h.removeCallbacks(autoStop)
         h.removeCallbacks(stallCheck)
         val fps = measuredFps()
+        val stab = if (appliedStab.isNotEmpty()) ". Stabilization: $appliedStab" else ""
         teardown()
-        val got = if (fps > 0) ", measured %.1f fps".format(fps) else ""
+        val got = (if (fps > 0) ", measured %.1f fps".format(fps) else "") + stab
         if (error == null) {
             Buzz.stopped(this)
             p.lastStatus = "Saved $clips clip(s) to DCIM/CamMax. " +
@@ -482,7 +494,8 @@ class RecordingService : Service() {
                 put("audioChannels", 2)
                 put("rotation", rotation)
                 put("iso", cfg.iso)
-                put("stabilize", cfg.stabilize)
+                put("stabMode", cfg.stabMode)
+                put("stabApplied", appliedStab)
                 put("highSpeed", cfg.highSpeed)
                 put("startMs", s.startMs)
                 put("endMs", if (status == "recording") 0 else System.currentTimeMillis())

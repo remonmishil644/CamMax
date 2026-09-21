@@ -52,7 +52,6 @@ class SettingsActivity : AppCompatActivity() {
 
         b.bitrateSlider.value = snap(p.bitrateMbps, 10, 300, 5)
         b.isoSlider.value = snap(p.iso, 0, 3200, 50)
-        b.stabilizeSwitch.isChecked = p.stabilize
         b.hevcSwitch.isChecked = p.hevc
         if (p.customFps > 0) b.customFps.setText(p.customFps.toString())
 
@@ -61,6 +60,7 @@ class SettingsActivity : AppCompatActivity() {
         b.lensChips.setOnCheckedStateChangeListener { g, _ ->
             if (building) return@setOnCheckedStateChangeListener
             p.cameraId = (checkedTag(g) as? Lens)?.id ?: return@setOnCheckedStateChangeListener
+            buildStabChips()
             buildSizeChips()
             changed()
         }
@@ -85,13 +85,27 @@ class SettingsActivity : AppCompatActivity() {
         b.isoSlider.addOnChangeListener { _, v, fromUser ->
             if (fromUser) { p.iso = v.roundToInt(); changed() }
         }
-        b.stabilizeSwitch.setOnCheckedChangeListener { _, on -> p.stabilize = on; changed() }
+        b.stabChips.setOnCheckedStateChangeListener { g, _ ->
+            if (building) return@setOnCheckedStateChangeListener
+            p.stabMode = checkedTag(g) as? Int ?: return@setOnCheckedStateChangeListener
+            changed()
+        }
         b.hevcSwitch.setOnCheckedChangeListener { _, on -> p.hevc = on; changed() }
         b.customFps.doAfterTextChanged {
             p.customFps = it?.toString()?.toIntOrNull()?.takeIf { v -> v in 1..960 } ?: 0
             changed()
         }
 
+        b.walkBtn.setOnClickListener {
+            lenses.firstOrNull { it.name == "Ultrawide" }?.let { p.cameraId = it.id }
+            p.stabMode = Stab.AUTO
+            p.chipFps = 60
+            p.highSpeed = false
+            b.customFps.setText("")
+            buildLensChips()
+            changed()
+            Toast.makeText(this, "Walking preset applied", Toast.LENGTH_SHORT).show()
+        }
         b.testBtn.setOnClickListener { runTest() }
         b.advancedBtn.setOnClickListener {
             val show = b.advancedBox.visibility != View.VISIBLE
@@ -136,7 +150,18 @@ class SettingsActivity : AppCompatActivity() {
         }
         selected?.let { p.cameraId = it.id }
         building = false
+        buildStabChips()
         buildSizeChips()
+    }
+
+    private fun buildStabChips() {
+        building = true
+        b.stabChips.removeAllViews()
+        val options = CameraCaps.stabOptions(this, p.cameraId)
+        val selected = if (p.stabMode in options) p.stabMode else CameraCaps.bestStab(options)
+        options.forEach { m -> addChip(b.stabChips, Stab.label(m), m, m == selected) }
+        p.stabMode = selected
+        building = false
     }
 
     private fun buildSizeChips() {
@@ -192,7 +217,7 @@ class SettingsActivity : AppCompatActivity() {
             lens,
             if (p.hevc) "HEVC" else "H.264",
             "${p.bitrateMbps} Mbps",
-            if (p.stabilize && !p.highSpeed) "stabilized" else "no stabilization"
+            if (p.stabMode != Stab.OFF && !p.highSpeed) "${Stab.label(p.stabMode).lowercase()} stabilization" else "no stabilization"
         ).joinToString("  ·  ")
 
         val bytesPerSec = (p.bitrateMbps * 1_000_000.0 + RecordingService.AUDIO_BPS) / 8
@@ -204,6 +229,15 @@ class SettingsActivity : AppCompatActivity() {
         val minutes = (free / bytesPerSec / 60).toInt()
         val time = if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min" else "$minutes min"
         b.storageText.text = "%.0f GB free  ·  room for about %s".format(free / 1e9, time)
+
+        b.stabNote.text = when {
+            p.highSpeed -> "High-speed mode turns stabilization off."
+            p.stabMode == Stab.ENHANCED -> "Strongest mode the camera offers. It crops the picture by up to 20%."
+            p.stabMode == Stab.ELECTRONIC -> "Software stabilization with a small crop. Android recommends this over mixing both."
+            p.stabMode == Stab.BOTH -> "Lens and software together. Android warns they can fight each other and cause wobble."
+            p.stabMode == Stab.OPTICAL -> "Lens stabilization only. No crop. Good for standing still, weak for walking."
+            else -> "No stabilization. Use on a tripod."
+        }
 
         val opts = CameraCaps.fpsOptions(this, p.cameraId, Size(p.width, p.height))
         val chosen = opts.firstOrNull { it.fps == p.chipFps && it.highSpeed == p.highSpeed }
