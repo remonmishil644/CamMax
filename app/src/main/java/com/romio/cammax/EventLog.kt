@@ -2,7 +2,9 @@ package com.romio.cammax
 
 import android.app.Application
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -42,13 +44,27 @@ object Buzz {
     fun started(ctx: Context) = once(ctx, 600)
     fun stopped(ctx: Context) = once(ctx, 120)
 
-    fun error(ctx: Context) = try {
-        vibrator(ctx).vibrate(VibrationEffect.createWaveform(longArrayOf(0, 90, 110, 90, 110, 90), -1))
-    } catch (_: Exception) {}
+    fun error(ctx: Context) =
+        play(ctx, VibrationEffect.createWaveform(longArrayOf(0, 90, 110, 90, 110, 90), -1))
 
-    private fun once(ctx: Context, ms: Long) = try {
-        vibrator(ctx).vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
-    } catch (_: Exception) {}
+    private fun once(ctx: Context, ms: Long) =
+        play(ctx, VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+
+    // Alarm usage: battery saver and Do Not Disturb mute ordinary vibrations, and these are the only feedback.
+    private fun play(ctx: Context, effect: VibrationEffect) {
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                vibrator(ctx).vibrate(effect,
+                    VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator(ctx).vibrate(effect, AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM).build())
+            }
+        } catch (e: Exception) {
+            EventLog.add(ctx, "vibrate failed: $e")
+        }
+    }
 }
 
 class App : Application() {

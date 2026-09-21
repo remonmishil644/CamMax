@@ -82,6 +82,8 @@ class RecordingService : Service() {
     private var seq = 0
     private var clips = 0
     private var frames = 0L
+    private var framesSeen = -1L
+    private var stalls = 0
     private var settleTs = 0L
     private var firstTs = 0L
     private var lastTs = 0L
@@ -89,8 +91,22 @@ class RecordingService : Service() {
     private val retryRunnable = Runnable {
         if (state == State.RECORDING || state == State.STARTING) openAndRecord()
     }
+    // Runs on the main thread so it still fires when the camera thread is stuck.
     private val watchdog = Runnable {
-        if (state == State.STARTING) finish("Camera did not start within 15 s")
+        if (state == State.STARTING) {
+            log("watchdog: still starting after 15 s")
+            Buzz.error(this)
+            h.post { if (state == State.STARTING) finish("Camera did not start within 15 s", buzz = false) }
+        }
+    }
+    private val stallCheck = object : Runnable {
+        override fun run() {
+            if (state == State.RECORDING && camera != null) {
+                if (frames == framesSeen) stalls++ else { stalls = 0; framesSeen = frames }
+                if (stalls >= 2) { stalls = 0; interrupted("no frames for 10 s") }
+            }
+            h.postDelayed(this, 5_000)
+        }
     }
     private val autoStop = Runnable {
         if (state == State.RECORDING) { state = State.STOPPING; finish(null) }
@@ -105,7 +121,8 @@ class RecordingService : Service() {
                 if (!goForeground()) {
                     Prefs(this).lastStatus = "Android refused to start the camera service. Open CamMax and try again."
                     Buzz.error(this)
-                    if (state == State.IDLE) stopSelfResult(startId)
+                    // Let the error buzz finish before the service goes away.
+                    main.postDelayed({ if (state == State.IDLE) stopSelfResult(lastStartId) }, 800)
                     return START_NOT_STICKY
                 }
                 if (state == State.IDLE) {
@@ -113,6 +130,7 @@ class RecordingService : Service() {
                     active = this
                     autoStopMs = intent.getLongExtra(EXTRA_AUTO_STOP_MS, 0L)
                     acquireWake()
+                    main.postDelayed(watchdog, 15_000)
                     h.post { begin() }
                 } else {
                     log("start ignored: state=$state")
@@ -120,8 +138,8 @@ class RecordingService : Service() {
             }
             ACTION_STOP -> {
                 if (state == State.RECORDING) {
-                    state = State.STOPPING
-                    h.post { finish(null) }
+                    // The RECORDING to STOPPING change happens only on the camera thread.
+                    h.post { if (state == State.RECORDING) { state = State.STOPPING; finish(null) } }
                 } else if (state == State.IDLE) {
                     stopSelfResult(startId)
                 }
@@ -140,10 +158,17 @@ class RecordingService : Service() {
                 "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
                 "stab=${cfg.stabilize} iso=${cfg.iso} autoStop=$autoStopMs")
         try { Salvage.run(this, force = true) } catch (e: Exception) { log("salvage failed: $e") }
-        watchThermal()
-        h.postDelayed(watchdog, 15_000)
-        detectRotation { rot ->
-            rotation = rot
+        try { watchThermal() } catch (e: Exception) { log("thermal watch failed: $e") }
+        h.removeCallbacks(stallCheck)
+        h.postDelayed(stallCheck, 5_000)
+        try {
+            detectRotation { rot ->
+                rotation = rot
+                openAndRecord()
+            }
+        } catch (e: Exception) {
+            log("rotation failed: $e")
+            rotation = 90
             openAndRecord()
         }
     }
@@ -153,12 +178,12 @@ class RecordingService : Service() {
             finish("Storage full. Delete some files, then tap CamMax REC again.")
             return
         }
-        frames = 0; settleTs = 0; firstTs = 0; lastTs = 0
+        frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
         val gen = ++openGen
         try {
             val seg = newSegment()
             current = seg
-            recorder = buildRecorder(seg)
+            recorder = buildRecorder(seg, gen)
             camMgr.openCamera(cfg.cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(dev: CameraDevice) {
                     if (gen != openGen) { dev.close(); return }
@@ -183,7 +208,7 @@ class RecordingService : Service() {
         }
     }
 
-    private fun buildRecorder(seg: Segment): MediaRecorder {
+    private fun buildRecorder(seg: Segment, gen: Int): MediaRecorder {
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this)
                 else @Suppress("DEPRECATION") MediaRecorder()
         r.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
@@ -200,13 +225,23 @@ class RecordingService : Service() {
         r.setOrientationHint(rotation)
         r.setMaxFileSize(segmentBytes())
         r.setOutputFile(seg.pfd.fileDescriptor)
-        r.setOnInfoListener { _, what, _ -> h.post { onInfo(what) } }
-        r.setOnErrorListener { _, what, extra -> h.post { interrupted("recorder error $what/$extra") } }
+        r.setOnInfoListener { _, what, _ -> h.post { if (gen == openGen) onInfo(what) } }
+        r.setOnErrorListener { _, what, extra ->
+            h.post { if (gen == openGen) interrupted("recorder error $what/$extra") }
+        }
         r.prepare()
         return r
     }
 
     private fun configure(dev: CameraDevice, gen: Int) {
+        try {
+            configureUnsafe(dev, gen)
+        } catch (e: Exception) {
+            interrupted("configure failed: ${e.javaClass.simpleName} ${e.message}")
+        }
+    }
+
+    private fun configureUnsafe(dev: CameraDevice, gen: Int) {
         val rec = recorder ?: return
         val surface = rec.surface
         val ch = camMgr.getCameraCharacteristics(cfg.cameraId)
@@ -268,7 +303,7 @@ class RecordingService : Service() {
                             interrupted("recorder refused ${cfg.width}x${cfg.height} @ ${cfg.fps} fps: ${e.message}")
                             return
                         }
-                        h.removeCallbacks(watchdog)
+                        main.removeCallbacks(watchdog)
                         if (state == State.STARTING) {
                             recordingSince = SystemClock.elapsedRealtime()
                             state = State.RECORDING
@@ -346,21 +381,24 @@ class RecordingService : Service() {
         h.removeCallbacks(retryRunnable)
         try { session?.stopRepeating() } catch (_: Exception) {}
         val ok = try { recorder?.stop(); true } catch (_: Exception) { false }
-        try { recorder?.release() } catch (_: Exception) {}
-        recorder = null
         try { session?.close() } catch (_: Exception) {}
         session = null
         try { camera?.close() } catch (_: Exception) {}
         camera = null
+        // Release last: it destroys the surface the camera session was using.
+        try { recorder?.release() } catch (_: Exception) {}
+        recorder = null
         current?.let { closeSegment(it, ok) }
         current = null
         next?.let { discardSegment(it) }
         next = null
     }
 
-    private fun finish(error: String?) {
-        h.removeCallbacks(watchdog)
+    private fun finish(error: String?, buzz: Boolean = true) {
+        if (state == State.IDLE) return
+        main.removeCallbacks(watchdog)
         h.removeCallbacks(autoStop)
+        h.removeCallbacks(stallCheck)
         val fps = measuredFps()
         teardown()
         val got = if (fps > 0) ", measured %.1f fps".format(fps) else ""
@@ -369,7 +407,7 @@ class RecordingService : Service() {
             p.lastStatus = "Saved $clips clip(s) to DCIM/CamMax. " +
                     "${cfg.width}x${cfg.height}, asked ${cfg.fps} fps$got."
         } else {
-            Buzz.error(this)
+            if (buzz) Buzz.error(this)
             p.lastStatus = error + got
         }
         log("finish: ${error ?: "ok"} clips=$clips$got")
@@ -460,10 +498,10 @@ class RecordingService : Service() {
     private fun segmentBytes(): Long =
         ((cfg.bitrateMbps * 1_000_000L + AUDIO_BPS) / 8 * SEGMENT_SECONDS).coerceAtMost(3_900_000_000L)
 
-    private fun hasSpace(): Boolean {
-        val path = getExternalFilesDir(null)?.path ?: return true
-        return StatFs(path).availableBytes > segmentBytes() + 300L * 1024 * 1024
-    }
+    private fun hasSpace(): Boolean = try {
+        val path = getExternalFilesDir(null)?.path
+        path == null || StatFs(path).availableBytes > segmentBytes() + 300L * 1024 * 1024
+    } catch (_: Exception) { true }
 
     private fun detectRotation(cb: (Int) -> Unit) {
         val sm = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -489,8 +527,9 @@ class RecordingService : Service() {
     }
 
     private fun hintFor(deviceDeg: Int): Int {
-        val sensor = camMgr.getCameraCharacteristics(cfg.cameraId)
-            .get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+        val sensor = try {
+            camMgr.getCameraCharacteristics(cfg.cameraId).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+        } catch (_: Exception) { 90 }
         return (sensor + deviceDeg) % 360
     }
 

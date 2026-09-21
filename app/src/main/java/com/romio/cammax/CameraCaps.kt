@@ -19,7 +19,7 @@ object CameraCaps {
     fun lenses(ctx: Context): List<Lens> {
         val m = mgr(ctx)
         val raw = m.cameraIdList.mapNotNull { id ->
-            val ch = m.getCameraCharacteristics(id)
+            val ch = try { m.getCameraCharacteristics(id) } catch (_: Exception) { return@mapNotNull null }
             if (ch.get(CameraCharacteristics.LENS_FACING) != CameraCharacteristics.LENS_FACING_BACK) {
                 return@mapNotNull null
             }

@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.WindowManager
 import androidx.core.content.ContextCompat
 
 class ToggleActivity : Activity() {
@@ -18,7 +17,6 @@ class ToggleActivity : Activity() {
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
-        window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
         val st = RecordingService.state
         EventLog.add(this, "tap: state=$st")
 
@@ -41,7 +39,10 @@ class ToggleActivity : Activity() {
                 }
                 finish()
             }
-            RecordingService.State.STARTING -> finish()
+            RecordingService.State.STARTING -> {
+                EventLog.add(this, "tap ignored: already starting")
+                finish()
+            }
             RecordingService.State.STOPPING -> {
                 t0 = SystemClock.elapsedRealtime()
                 waitIdleThenStart()
@@ -75,14 +76,11 @@ class ToggleActivity : Activity() {
         waitStarted()
     }
 
-    // Android 14 needs the app in front while the camera service comes up.
+    // Stay in front until the service has entered the foreground (state leaves IDLE), then go.
     private fun waitStarted() {
         val dt = SystemClock.elapsedRealtime() - t0
-        val st = RecordingService.state
-        val done = st == RecordingService.State.RECORDING ||
-                (st == RecordingService.State.IDLE && dt > 1500) || dt > 5000
-        if (done) { finish(); return }
-        ui.postDelayed({ waitStarted() }, 100)
+        if (RecordingService.state != RecordingService.State.IDLE || dt > 2000) { finish(); return }
+        ui.postDelayed({ waitStarted() }, 50)
     }
 
     override fun onDestroy() {
