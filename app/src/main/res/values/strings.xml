@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">CamMax</string>
+    <string name="settings_label">Settings</string>
 </resources>
