@@ -1,14 +1,31 @@
-# CamMax
+# CamMax — دليل المشروع
 
-Custom Android video recorder for Samsung S22 Ultra. Exposes every resolution and fps the Camera2 API reports on your device, plus manual ISO, HEVC/H264, bitrate slider, and screen-off recording (black overlay + foreground service).
+تطبيق أندرويد بيسجّل فيديو 4K بمعدل 60 إطار والشاشة مقفولة، معمول لموبايل Samsung S22 Ultra.
 
-## Build
-Push to GitHub — Actions builds the debug APK automatically. Download it from the Actions run's artifacts.
+## التثبيت
+افتح الرابط ده من Chrome على الموبايل. الرابط ثابت وبيجيب آخر نسخة دايمًا:
 
-## Install
-Enable "Install unknown apps" for your file browser, tap the APK.
+https://github.com/remonmishil644/CamMax/releases/latest/download/CamMax.apk
 
-## Notes
-- 4K@60fps is the S22 Ultra hardware ceiling for UHD. 8K is 24fps only. 1080p goes up to 240fps via the SLOMO entries in the mode list.
-- Tap the black overlay to reveal the screen again.
-- Files land in `Movies/` inside the app's private storage — connect USB and pull them.
+لو ظهرت رسالة "problem parsing the package"، اعمل إعادة تشغيل للموبايل وجرّب تاني.
+
+## الاستخدام
+- أيقونة **CamMax**: الإعدادات، وحالة آخر تسجيل، وزر تجربة 10 ثواني، وسجل الأحداث.
+- أيقونة **CamMax REC** (النقطة الخضرا): لمسة تبدأ التسجيل، ولمسة تانية توقفه. مفيش شاشة بتفتح.
+- اهتزاز طويل = بدأ. اهتزاز قصير = وقف واتحفظ. 3 اهتزازات قصيرة = خطأ، افتح CamMax واقرا السبب.
+- الفيديوهات: `DCIM/CamMax`، كل مقطع دقيقتين.
+- بيانات الحركة لبرنامج Gyroflow: `Documents/CamMax`، ملف `.gcsv` بنفس اسم كل مقطع.
+
+## التثبيت بعد التصوير ببرنامج Gyroflow (للمشي)
+1. في CamMax اختار التثبيت **Off** أو **Optical**، وشغّل **Save motion data for Gyroflow**.
+2. انقل الفيديو وملف `.gcsv` اللي بنفس الاسم لفولدر واحد على الكمبيوتر.
+3. افتح الفيديو في Gyroflow (مجاني: https://gyroflow.xyz). البرنامج بيحمّل ملف الحركة لوحده.
+4. اضغط **Auto sync**، وبعدها **Export**.
+
+## محتويات الفولدر
+- `app/` كود التطبيق. `.github/workflows/build.yml` البناء على GitHub. `cammax.p12` مفتاح التوقيع (متغيّروش).
+- `apk/` نسخة من آخر ملف تثبيت. `CLAUDE.md` تعليمات لجلسات Claude الجاية. `TASK_CARD.md` كارت المهمة.
+
+## حقائق اتأكدنا منها على الموبايل
+- أقصى معدل في 4K هو 60 إطار. طلب 80 بيرجّع 60.
+- سامسونج مش بتدّي التطبيقات الخارجية تثبيت إلكتروني. المتاح **Off** و**Optical** بس.
