@@ -10,7 +10,8 @@ data class Config(
     val bitrateMbps: Int,
     val iso: Int,
     val hevc: Boolean,
-    val stabilize: Boolean
+    val stabilize: Boolean,
+    val highSpeed: Boolean
 )
 
 class Prefs(ctx: Context) {
@@ -52,9 +53,13 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("stabilize", true)
         set(v) = sp.edit().putBoolean("stabilize", v).apply()
 
+    var highSpeed: Boolean
+        get() = sp.getBoolean("highSpeed", false)
+        set(v) = sp.edit().putBoolean("highSpeed", v).apply()
+
     var lastStatus: String
         get() = sp.getString("lastStatus", "No recordings yet") ?: ""
         set(v) = sp.edit().putString("lastStatus", v).apply()
 
-    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabilize)
+    fun snapshot() = Config(cameraId, width, height, fps, bitrateMbps, iso, hevc, stabilize, highSpeed)
 }

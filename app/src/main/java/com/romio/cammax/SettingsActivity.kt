@@ -43,6 +43,14 @@ class SettingsActivity : AppCompatActivity() {
 
         refreshModes()
         b.saveBtn.setOnClickListener { save() }
+        b.infoBtn.setOnClickListener {
+            if (b.infoText.visibility == View.VISIBLE) {
+                b.infoText.visibility = View.GONE
+            } else {
+                b.infoText.text = CameraCaps.report(this)
+                b.infoText.visibility = View.VISIBLE
+            }
+        }
     }
 
     override fun onResume() {
@@ -61,7 +69,7 @@ class SettingsActivity : AppCompatActivity() {
         b.modeSpinner.adapter = ArrayAdapter(this,
             android.R.layout.simple_spinner_dropdown_item, modes.map { it.toString() })
         val saved = modes.indexOfFirst {
-            it.width == p.width && it.height == p.height && it.fps == p.fps
+            it.width == p.width && it.height == p.height && it.fps == p.fps && it.highSpeed == p.highSpeed
         }
         if (saved >= 0) b.modeSpinner.setSelection(saved)
     }
@@ -81,6 +89,7 @@ class SettingsActivity : AppCompatActivity() {
         p.width = mode.width
         p.height = mode.height
         p.fps = mode.fps
+        p.highSpeed = mode.highSpeed
         p.bitrateMbps = b.bitrateSeek.progress
         p.iso = b.isoSeek.progress
         p.hevc = b.hevcSwitch.isChecked

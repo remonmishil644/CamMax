@@ -13,6 +13,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
@@ -182,7 +183,8 @@ class RecordingService : Service() {
         val req = dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(surface)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
-            if (cfg.stabilize) {
+            // High-speed sessions reject stabilization and manual exposure.
+            if (cfg.stabilize && !cfg.highSpeed) {
                 val eis = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
                 if (eis != null && CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON in eis) {
                     set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
@@ -194,7 +196,7 @@ class RecordingService : Service() {
                         CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON)
                 }
             }
-            if (cfg.iso > 0) {
+            if (cfg.iso > 0 && !cfg.highSpeed) {
                 val range = ch.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
                 set(CaptureRequest.SENSOR_SENSITIVITY, range?.clamp(cfg.iso) ?: cfg.iso)
@@ -212,15 +214,21 @@ class RecordingService : Service() {
             }
         }
 
+        val sessionType = if (cfg.highSpeed) SessionConfiguration.SESSION_HIGH_SPEED
+                          else SessionConfiguration.SESSION_REGULAR
         dev.createCaptureSession(SessionConfiguration(
-            SessionConfiguration.SESSION_REGULAR,
+            sessionType,
             listOf(OutputConfiguration(surface)), exec,
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(s: CameraCaptureSession) {
                     if (gen != openGen) { s.close(); return }
                     session = s
                     try {
-                        s.setRepeatingRequest(req, frameCounter, h)
+                        if (s is CameraConstrainedHighSpeedCaptureSession) {
+                            s.setRepeatingBurst(s.createHighSpeedRequestList(req), frameCounter, h)
+                        } else {
+                            s.setRepeatingRequest(req, frameCounter, h)
+                        }
                         rec.start()
                     } catch (e: Exception) {
                         finish("Could not record ${cfg.width}x${cfg.height} @ ${cfg.fps} fps: ${e.message}")
@@ -375,6 +383,7 @@ class RecordingService : Service() {
                 put("rotation", rotation)
                 put("iso", cfg.iso)
                 put("stabilize", cfg.stabilize)
+                put("highSpeed", cfg.highSpeed)
                 put("startMs", s.startMs)
                 put("endMs", if (status == "recording") 0 else System.currentTimeMillis())
             }

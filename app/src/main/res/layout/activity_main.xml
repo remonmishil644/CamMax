@@ -60,5 +60,17 @@
             android:text="Tap the green-dot CamMax REC icon to start (long buzz). Tap it again to stop (short buzz). Three short buzzes mean an error; open CamMax to read it. Videos save in 2-minute clips to DCIM/CamMax."
             android:layout_marginTop="16dp" android:textSize="13sp"
             android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+        <Button android:id="@+id/infoBtn" android:text="Camera info"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_marginTop="16dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+        <TextView android:id="@+id/infoText"
+            android:visibility="gone"
+            android:textIsSelectable="true"
+            android:fontFamily="monospace" android:textSize="11sp"
+            android:layout_marginTop="8dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
     </LinearLayout>
 </ScrollView>
