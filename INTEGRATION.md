@@ -1,4 +1,4 @@
-# CamMax ↔ Video editor: integration contract (v1, 2026-09-22)
+# CamMax ↔ Video editor: integration contract (v2, 2026-09-22)
 
 Two projects, one pipeline. **CamMax** (`F:\CamMax`, Android app on the Samsung S22 Ultra) records.
 The **editor** (`F:\Video edit`, PC tool built on FFmpeg) sorts, trims, stabilizes, joins, and exports.
@@ -13,7 +13,7 @@ contract changes, change `F:\CamMax\INTEGRATION.md` first, bump the schema versi
 | `DCIM/CamMax/` | `CamMax_YYYYMMDD_HHMMSS_N.mp4` | One clip, at most 2 minutes. HEVC or H.264 + AAC 192 kbps 48 kHz stereo. |
 | `DCIM/CamMax/` | `…_broken.mp4` | A clip whose recording was cut (crash, battery, heat). The MP4 index (`moov`) is missing. |
 | `Documents/CamMax/` | same basename + `.gcsv` | Gyroflow IMU log for that clip: gyro (rad/s) and accelerometer, about 430 Hz. |
-| `Documents/CamMax/` | same basename + `.json` | Clip sidecar, schema `cammax.clip/1` (section 2). Written when the clip closes. |
+| `Documents/CamMax/` | same basename + `.json` | Clip sidecar, schema `cammax.clip/2` (section 2). Written when the clip closes. |
 
 Rules the editor can rely on:
 - Files pair by **basename**. `CamMax_20260922_021800_3.mp4` ↔ `CamMax_20260922_021800_3.gcsv` ↔ `….json`.
@@ -27,11 +27,17 @@ Rules the editor can rely on:
   `DCIM/Camera/` with **no** `.gcsv` and **no** `.json`. They already carry Samsung's stabilization.
 - Rotation is stored as MP4 rotation metadata and repeated in the JSON (`rotation`, degrees clockwise).
 
-## 2. Sidecar JSON, schema `cammax.clip/1`
+## 2. Sidecar JSON, schema `cammax.clip/2`
 
 ```json
 {
-  "schema": "cammax.clip/1",
+  "schema": "cammax.clip/2",
+  "clock": "realtime",
+  "firstFrameNs": 123456789000000,
+  "sessionFirstFrameNs": 123456789000000,
+  "gyroT0Ns": 123455789000000,
+  "gyroFirstSampleNs": 123455790200000,
+  "gyroRateHz": 430.2,
   "sessionId": "S20260922_021800",
   "clipIndex": 3,
   "videoFile": "CamMax_20260922_021800_3.mp4",
@@ -51,6 +57,14 @@ Rules the editor can rely on:
   "stabMode": 0,
   "stabApplied": "electronic off, optical off",
   "readoutMs": 16.4,
+  "lens": {
+    "lensKey": "SM-S908E_cam0_3840x2160",
+    "name": "Main", "cameraId": "0",
+    "focalLengthMm": 6.4, "equivFocalMm": 23, "aperture": 1.8,
+    "sensorWidthMm": 9.83, "sensorHeightMm": 7.37,
+    "pixelArray": "8000x6000", "activeArray": "8000x6000", "preCorrectionActiveArray": "8000x6000",
+    "intrinsics": null, "distortion": null
+  },
   "thermalStatus": 2,
   "interruption": "",
   "startMs": 1790000000000, "endMs": 1790000120000
@@ -58,6 +72,20 @@ Rules the editor can rely on:
 ```
 
 Field notes:
+- **Clock sync (v2).** `clock` is `realtime` when the camera stamps frames on the same clock as the gyroscope
+  (`SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME`). Then `firstFrameNs` is the sensor timestamp of the first frame the
+  recorder could encode, and the `.gcsv` is written so that **this frame sits at exactly t = 1000.000 ms**
+  (`gyroT0Ns = firstFrameNs - 1e9`). Pass Gyroflow `--gyro-offset 0` style: the offset is known, skip the heavy
+  auto-sync, or run it only as a fine check over a short range. `gyroFirstSampleNs` is the clock time of the
+  first row in the `.gcsv`; the row's `t` equals `(gyroFirstSampleNs - gyroT0Ns) / 1e6` ms. When `clock` is
+  `unknown`, CamMax anchors with `elapsedRealtimeNanos()` at the first frame callback, which is accurate to a
+  few ms. Clips 2, 3, … of a session start by a file switch inside MediaRecorder, so `firstFrameNs` is 0 for
+  them: derive their start from `sessionFirstFrameNs` plus the summed durations of the earlier clips (gapless).
+- **Lens identity (v2).** `lens.lensKey` is stable per phone, camera, resolution and mode: use it as the key of
+  the Gyroflow lens-profile cache in the editor. `intrinsics` (`[fx, fy, cx, cy, s]` in pre-correction
+  active-array pixels) and `distortion` (Brown-Conrady `[k1, k2, k3, p1, p2]`) come from the camera when Samsung
+  publishes them; on this phone expect `null`, so the editor calibrates once per `lensKey` with Gyroflow's
+  calibrator (a 30 s clip of a checkerboard on the PC screen) and stores the profile under that key.
 - `status`: `complete` or `broken`. `gyroFile` is `null` when motion logging was off.
 - `stabMode`: 0 Off, 1 Optical (OIS), 2 Electronic, 3 Both, 4 Enhanced. On this phone only 0 and 1 exist.
   **Gyroflow needs `stabMode` 0.** With 1 (OIS on) gyro stabilization gives wobble: fall back to optical-flow

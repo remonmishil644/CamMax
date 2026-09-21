@@ -52,7 +52,10 @@ class RecordingService : Service() {
         val pfd: ParcelFileDescriptor,
         val name: String,
         val startMs: Long
-    )
+    ) {
+        var firstFrameNs = 0L      // exact, from the camera; 0 when the clip began by a file switch
+        var gyroT0Ns = 0L          // clock time of t = 0 in this clip's .gcsv
+    }
 
     private val camThread = HandlerThread("cammax").apply { start() }
     private val h = Handler(camThread.looper)
@@ -74,6 +77,10 @@ class RecordingService : Service() {
     private var gyro: GyroLogger? = null
     private var fallbackNote = ""
     private var sessionId = ""
+    private var sessionFirstFrameNs = 0L
+    private var recStartNs = 0L
+    private var clipAnchorPending = false
+    private var realtimeClock = false
     private var lastInterruption = ""
     private var lastStartId = 0
     private var openGen = 0
@@ -160,6 +167,12 @@ class RecordingService : Service() {
         camMgr = getSystemService(CAMERA_SERVICE) as CameraManager
         startAttempts = 0; retries = 0; storageFull = false; clips = 0; fallbackNote = ""; lastInterruption = ""
         sessionId = "S" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        sessionFirstFrameNs = 0L
+        realtimeClock = try {
+            camMgr.getCameraCharacteristics(cfg.cameraId).get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+                    CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+        } catch (_: Exception) { false }
+        log("camera clock: ${if (realtimeClock) "realtime (shared with the gyro)" else "unknown"}")
         log("begin: cam${cfg.cameraId} ${cfg.width}x${cfg.height}@${cfg.fps} " +
                 "${if (cfg.hevc) "hevc" else "h264"} ${cfg.bitrateMbps}Mbps hs=${cfg.highSpeed} " +
                 "stab=${Stab.label(cfg.stabMode)}(${cfg.stabMode}) iso=${cfg.iso} autoStop=$autoStopMs")
@@ -302,6 +315,16 @@ class RecordingService : Service() {
                     log("stabilization applied by camera: $appliedStab")
                 }
                 val ts = res.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+                // First frame the recorder can have encoded: anchor the clip and its gyro file to it.
+                if (clipAnchorPending && (!realtimeClock || ts >= recStartNs)) {
+                    clipAnchorPending = false
+                    val anchor = if (realtimeClock) ts else SystemClock.elapsedRealtimeNanos()
+                    current?.let { seg ->
+                        seg.firstFrameNs = anchor
+                        if (sessionFirstFrameNs == 0L) sessionFirstFrameNs = anchor
+                        seg.gyroT0Ns = gyro?.beginClip(seg.name, anchor) ?: 0L
+                    }
+                }
                 // Skip the first second while exposure settles.
                 if (settleTs == 0L) settleTs = ts
                 if (ts - settleTs < 1_000_000_000L) return
@@ -333,7 +356,8 @@ class RecordingService : Service() {
                             return
                         }
                         main.removeCallbacks(watchdog)
-                        current?.let { gyro?.beginClip(it.name) }
+                        recStartNs = SystemClock.elapsedRealtimeNanos()
+                        clipAnchorPending = true
                         if (state == State.STARTING) {
                             recordingSince = SystemClock.elapsedRealtime()
                             state = State.RECORDING
@@ -372,7 +396,7 @@ class RecordingService : Service() {
                 current = next
                 next = null
                 retries = 0
-                current?.let { gyro?.beginClip(it.name) }
+                current?.let { it.gyroT0Ns = gyro?.beginClip(it.name, null) ?: 0L }
             }
             MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED -> {
                 if (storageFull || freeBytes() < MIN_START_BYTES)
@@ -429,6 +453,7 @@ class RecordingService : Service() {
 
     private fun teardown() {
         openGen++
+        clipAnchorPending = false
         h.removeCallbacks(retryRunnable)
         gyro?.endClip()
         try { session?.stopRepeating() } catch (_: Exception) {}
@@ -555,7 +580,14 @@ class RecordingService : Service() {
         try {
             val base = s.name.removeSuffix(".mp4")
             val j = clipJson(s, if (ok) "complete" else "broken").apply {
-                put("schema", "cammax.clip/1")
+                put("schema", "cammax.clip/2")
+                put("clock", if (realtimeClock) "realtime" else "unknown")
+                put("firstFrameNs", s.firstFrameNs)
+                put("sessionFirstFrameNs", sessionFirstFrameNs)
+                put("gyroT0Ns", s.gyroT0Ns)
+                put("gyroFirstSampleNs", gyro?.clipFirstSampleNs ?: 0L)
+                put("gyroRateHz", gyro?.rateHz() ?: 0.0)
+                put("lens", CameraCaps.lensJson(this@RecordingService, cfg.cameraId, cfg.width, cfg.height, cfg.highSpeed))
                 put("sessionId", sessionId)
                 put("clipIndex", clips)
                 put("videoFile", if (ok) s.name else base + "_broken.mp4")

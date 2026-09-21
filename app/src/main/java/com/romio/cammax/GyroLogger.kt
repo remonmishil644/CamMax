@@ -32,6 +32,9 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
 
     @Volatile var samples = 0L
         private set
+    // Timestamp (sensor clock) of the first sample written into the current clip file.
+    @Volatile var clipFirstSampleNs = 0L
+        private set
     @Volatile var firstTs = 0L
         private set
     @Volatile var lastTs = 0L
@@ -46,12 +49,13 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
         return true
     }
 
-    // The clip switch time is only known to within about a second, so each file starts with
-    // one second of earlier samples. Gyroflow's auto-sync finds the exact offset.
-    fun beginClip(videoName: String) {
+    // Every file starts one second before the video. When firstFrameNs is known (camera and IMU share
+    // the elapsedRealtime clock), the first video frame sits at exactly t = 1000 ms. Returns t0.
+    fun beginClip(videoName: String, firstFrameNs: Long?): Long {
         synchronized(lock) {
             closeLocked()
-            t0 = SystemClock.elapsedRealtimeNanos() - PRE_ROLL_NS
+            clipFirstSampleNs = 0L
+            t0 = (firstFrameNs ?: SystemClock.elapsedRealtimeNanos()) - PRE_ROLL_NS
             try {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, videoName.removeSuffix(".mp4") + ".gcsv")
@@ -59,15 +63,16 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
                     put(MediaStore.MediaColumns.RELATIVE_PATH, "Documents/CamMax")
                 }
                 val uri = ctx.contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
-                    ?: return
-                val w = ctx.contentResolver.openOutputStream(uri)?.bufferedWriter() ?: return
+                    ?: return t0
+                val w = ctx.contentResolver.openOutputStream(uri)?.bufferedWriter() ?: return t0
                 w.write("GYROFLOW IMU LOG\n")
                 w.write("version,1.3\n")
                 w.write("id,cammax\n")
                 // Best guess for a back camera. If Gyroflow moves the wrong way, right-click its
                 // timeline and pick "Guess IMU orientation here".
                 w.write("orientation,YxZ\n")
-                w.write("note,video starts near t=1000 ms; run auto-sync\n")
+                w.write(if (firstFrameNs != null) "note,first video frame at t=1000.000 ms on the same clock\n"
+                        else "note,video starts near t=1000 ms; exact offset is in the json sidecar\n")
                 w.write("vendor,samsung\n")
                 w.write("videofilename,$videoName\n")
                 val ro = readoutMs()
@@ -85,6 +90,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
                 EventLog.add(ctx, "gyro file failed: $e")
                 out = null
             }
+            return t0
         }
     }
 
@@ -110,7 +116,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
         samples++
         synchronized(lock) {
             ring.addLast(s)
-            while (ring.isNotEmpty() && s.ts - ring.first().ts > PRE_ROLL_NS) ring.removeFirst()
+            while (ring.isNotEmpty() && s.ts - ring.first().ts > RING_NS) ring.removeFirst()
             if (out != null) writeLocked(s)
         }
     }
@@ -118,6 +124,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
 
     private fun writeLocked(s: Sample) {
+        if (clipFirstSampleNs == 0L) clipFirstSampleNs = s.ts
         try {
             out?.write(String.format(Locale.US, "%.3f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f\n",
                 (s.ts - t0) / 1e6, s.gx, s.gy, s.gz, s.ax, s.ay, s.az))
@@ -129,5 +136,8 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
         out = null
     }
 
-    companion object { const val PRE_ROLL_NS = 1_000_000_000L }
+    companion object {
+        const val PRE_ROLL_NS = 1_000_000_000L
+        const val RING_NS = 2_000_000_000L
+    }
 }

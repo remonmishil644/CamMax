@@ -100,6 +100,35 @@ object CameraCaps {
         else -> Stab.OFF
     }
 
+    // Everything the PC editor needs to pick or build a Gyroflow lens profile for a clip.
+    fun lensJson(ctx: Context, cameraId: String, width: Int, height: Int, highSpeed: Boolean): org.json.JSONObject {
+        val j = org.json.JSONObject()
+        try {
+            val ch = mgr(ctx).getCameraCharacteristics(cameraId)
+            val lens = lenses(ctx).firstOrNull { it.id == cameraId }
+            j.put("lensKey", "${android.os.Build.MODEL}_cam${cameraId}_${width}x$height" + if (highSpeed) "_hs" else "")
+            j.put("name", lens?.name ?: "Camera $cameraId")
+            j.put("cameraId", cameraId)
+            ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()?.let { j.put("focalLengthMm", it.toDouble()) }
+            lens?.detail?.removeSuffix(" mm")?.toIntOrNull()?.let { j.put("equivFocalMm", it) }
+            ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()?.let { j.put("aperture", it.toDouble()) }
+            ch.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.let {
+                j.put("sensorWidthMm", it.width.toDouble()); j.put("sensorHeightMm", it.height.toDouble())
+            }
+            ch.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { j.put("pixelArray", "${it.width}x${it.height}") }
+            ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.let { j.put("activeArray", "${it.width()}x${it.height()}") }
+            ch.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)?.let {
+                j.put("preCorrectionActiveArray", "${it.width()}x${it.height()}")
+            }
+            // [f_x, f_y, c_x, c_y, s] in pre-correction active-array pixels; null when Samsung does not publish it.
+            val intr = ch.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+            j.put("intrinsics", if (intr != null) org.json.JSONArray(intr.map { it.toDouble() }) else org.json.JSONObject.NULL)
+            val dist = ch.get(CameraCharacteristics.LENS_DISTORTION)
+            j.put("distortion", if (dist != null) org.json.JSONArray(dist.map { it.toDouble() }) else org.json.JSONObject.NULL)
+        } catch (_: Exception) {}
+        return j
+    }
+
     fun report(ctx: Context): String {
         val m = mgr(ctx)
         val sb = StringBuilder()
