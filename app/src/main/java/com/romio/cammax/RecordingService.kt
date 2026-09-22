@@ -96,6 +96,10 @@ class RecordingService : Service() {
     private var framesSeen = -1L
     private var stalls = 0
     private var settleTs = 0L
+    private val fpsTimeline = ArrayList<Int>()
+    private var dropped = 0L
+    private var secBucket = -1L
+    private var secCount = 0
     @Volatile private var appliedStab = ""
     private var firstTs = 0L
     private var lastTs = 0L
@@ -204,7 +208,7 @@ class RecordingService : Service() {
                 .format(freeBytes() / 1e9))
             return
         }
-        appliedStab = ""; frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
+        appliedStab = ""; fpsTimeline.clear(); dropped = 0; secBucket = -1; secCount = 0; liveFps = 0; frames = 0; framesSeen = -1; stalls = 0; settleTs = 0; firstTs = 0; lastTs = 0
         val gen = ++openGen
         try {
             val seg = newSegment()
@@ -329,8 +333,18 @@ class RecordingService : Service() {
                 if (settleTs == 0L) settleTs = ts
                 if (ts - settleTs < 1_000_000_000L) return
                 if (firstTs == 0L) firstTs = ts
+                val frameNs = 1_000_000_000L / cfg.fps
+                if (lastTs > 0 && ts - lastTs > frameNs * 3 / 2) dropped += (ts - lastTs + frameNs / 2) / frameNs - 1
                 lastTs = ts
                 frames++
+                val sec = (ts - firstTs) / 1_000_000_000L
+                if (sec != secBucket) {
+                    if (secBucket >= 0) { fpsTimeline.add(secCount); liveFps = secCount }
+                    secBucket = sec; secCount = 0
+                    liveThermal = thermal
+                    liveSeconds = ((SystemClock.elapsedRealtime() - recordingSince) / 1000).toInt()
+                }
+                secCount++
             }
         }
 
@@ -481,10 +495,11 @@ class RecordingService : Service() {
         val motion = if (g != null && g.samples > 0 && (clips > 0 || current != null))
             ". Motion data: %.0f Hz, saved to Documents/CamMax".format(g.rateHz()) else ""
         val stab = if (appliedStab.isNotEmpty()) ". Stabilization: $appliedStab" else ""
+        val drops = if (frames > 0) ". Dropped frames: $dropped (%.1f%%)".format(100.0 * dropped / (frames + dropped)) else ""
         teardown()
         try { gyro?.stop() } catch (_: Exception) {}
         gyro = null
-        val got = (if (fps > 0) ", measured %.1f fps".format(fps) else "") + stab + motion + "." + fallbackNote
+        val got = (if (fps > 0) ", measured %.1f fps".format(fps) else "") + drops + stab + motion + "." + fallbackNote
         if (error == null) {
             Buzz.stopped(this)
             p.lastStatus = "Saved $clips clip(s) to DCIM/CamMax. " +
@@ -529,6 +544,8 @@ class RecordingService : Service() {
         if (size in 0..1023) {
             try { contentResolver.delete(s.uri, null, null) } catch (_: Exception) {}
             Sidecars.delete(this, s.name)
+            gyro?.discardClip()
+            if (!ok) writePublicSidecar(s, ok = false, noVideo = true)
             return
         }
         val v = ContentValues().apply {
@@ -576,22 +593,24 @@ class RecordingService : Service() {
     }
 
     // The PC editor reads this file. The contract is INTEGRATION.md in the project root: keep them in step.
-    private fun writePublicSidecar(s: Segment, ok: Boolean) {
+    private fun writePublicSidecar(s: Segment, ok: Boolean, noVideo: Boolean = false) {
         try {
             val base = s.name.removeSuffix(".mp4")
             val j = clipJson(s, if (ok) "complete" else "broken").apply {
-                put("schema", "cammax.clip/2")
+                put("schema", "cammax.clip/3")
                 put("clock", if (realtimeClock) "realtime" else "unknown")
                 put("firstFrameNs", s.firstFrameNs)
                 put("sessionFirstFrameNs", sessionFirstFrameNs)
                 put("gyroT0Ns", s.gyroT0Ns)
                 put("gyroFirstSampleNs", gyro?.clipFirstSampleNs ?: 0L)
                 put("gyroRateHz", gyro?.rateHz() ?: 0.0)
+                put("fpsTimeline", org.json.JSONArray(fpsTimeline))
+                put("droppedFrames", dropped)
                 put("lens", CameraCaps.lensJson(this@RecordingService, cfg.cameraId, cfg.width, cfg.height, cfg.highSpeed))
                 put("sessionId", sessionId)
                 put("clipIndex", clips)
-                put("videoFile", if (ok) s.name else base + "_broken.mp4")
-                put("gyroFile", if (cfg.gyro && gyro != null) "$base.gcsv" else JSONObject.NULL)
+                put("videoFile", if (noVideo) JSONObject.NULL else if (ok) s.name else base + "_broken.mp4")
+                put("gyroFile", if (!noVideo && cfg.gyro && gyro != null) "$base.gcsv" else JSONObject.NULL)
                 put("gyroPreRollMs", 1000)
                 put("readoutMs", p.readoutMs(readoutKey()).toDouble())
                 put("thermalStatus", thermal)
@@ -737,6 +756,9 @@ class RecordingService : Service() {
         const val MIN_START_BYTES = 700L * 1024 * 1024
         @Volatile var state = State.IDLE
         @Volatile var recordingSince = 0L
+        @Volatile var liveFps = 0
+        @Volatile var liveThermal = 0
+        @Volatile var liveSeconds = 0
         @Volatile private var active: RecordingService? = null
     }
 }

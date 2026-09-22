@@ -1,4 +1,4 @@
-# CamMax ↔ Video editor: integration contract (v2, 2026-09-22)
+# CamMax ↔ Video editor: integration contract (v3, 2026-09-23)
 
 Two projects, one pipeline. **CamMax** (`F:\CamMax`, Android app on the Samsung S22 Ultra) records.
 The **editor** (`F:\Video edit`, PC tool built on FFmpeg) sorts, trims, stabilizes, joins, and exports.
@@ -13,7 +13,7 @@ contract changes, change `F:\CamMax\INTEGRATION.md` first, bump the schema versi
 | `DCIM/CamMax/` | `CamMax_YYYYMMDD_HHMMSS_N.mp4` | One clip, at most 2 minutes. HEVC or H.264 + AAC 192 kbps 48 kHz stereo. |
 | `DCIM/CamMax/` | `…_broken.mp4` | A clip whose recording was cut (crash, battery, heat). The MP4 index (`moov`) is missing. |
 | `Documents/CamMax/` | same basename + `.gcsv` | Gyroflow IMU log for that clip: gyro (rad/s) and accelerometer, about 430 Hz. |
-| `Documents/CamMax/` | same basename + `.json` | Clip sidecar, schema `cammax.clip/2` (section 2). Written when the clip closes. |
+| `Documents/CamMax/` | same basename + `.json` | Clip sidecar, schema `cammax.clip/3` (section 2). Written when the clip closes. |
 
 Rules the editor can rely on:
 - Files pair by **basename**. `CamMax_20260922_021800_3.mp4` ↔ `CamMax_20260922_021800_3.gcsv` ↔ `….json`.
@@ -27,11 +27,13 @@ Rules the editor can rely on:
   `DCIM/Camera/` with **no** `.gcsv` and **no** `.json`. They already carry Samsung's stabilization.
 - Rotation is stored as MP4 rotation metadata and repeated in the JSON (`rotation`, degrees clockwise).
 
-## 2. Sidecar JSON, schema `cammax.clip/2`
+## 2. Sidecar JSON, schema `cammax.clip/3`
 
 ```json
 {
-  "schema": "cammax.clip/2",
+  "schema": "cammax.clip/3",
+  "fpsTimeline": [59, 60, 60, 57, 52, 48],
+  "droppedFrames": 214,
   "clock": "realtime",
   "firstFrameNs": 123456789000000,
   "sessionFirstFrameNs": 123456789000000,
@@ -72,6 +74,17 @@ Rules the editor can rely on:
 ```
 
 Field notes:
+- **Frame drops (v3).** `fpsTimeline` is the number of sensor frames in each full second after the 1 s settle
+  window; `droppedFrames` counts the frames missing from the 1/fps grid (a gap of N frame periods adds N-1).
+  Frames sit on an exact grid and gaps are whole multiples, so the timeline shows *where* the phone throttled.
+- **Orphans (v3).** A recording that produced no video deletes its own `.gcsv` and, when it failed, writes a
+  `.json` with `status: "broken"`, `videoFile: null`, `gyroFile: null`, plus `interruption` and `thermalStatus`.
+  So every `.json` is a recording attempt; a `.gcsv` alone should no longer occur (older builds left them).
+- **Rotation.** The MP4 display matrix reads -90 where the sidecar says `rotation: 90`. Same orientation,
+  opposite sign convention. Trust either.
+- **`r_frame_rate`.** MediaRecorder writes the container; CamMax cannot set its header frame rate. ffprobe's
+  `r_frame_rate` is a guess from timestamps and reads 120/1 when frames are dropped on a 59.94 grid. Use
+  `avg_frame_rate` or the sidecar (`fpsRequested`, `fpsMeasured`, `fpsTimeline`), never `r_frame_rate`.
 - **Clock sync (v2).** `clock` is `realtime` when the camera stamps frames on the same clock as the gyroscope
   (`SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME`). Then `firstFrameNs` is the sensor timestamp of the first frame the
   recorder could encode, and the `.gcsv` is written so that **this frame sits at exactly t = 1000.000 ms**

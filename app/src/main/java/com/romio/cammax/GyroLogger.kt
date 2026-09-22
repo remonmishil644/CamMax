@@ -25,6 +25,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
     private val lock = Any()
     private val ring = ArrayDeque<Sample>()
     private var out: BufferedWriter? = null
+    private var outUri: android.net.Uri? = null
     private var t0 = 0L
     private var ax = 0f
     private var ay = 0f
@@ -65,6 +66,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
                 val uri = ctx.contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
                     ?: return t0
                 val w = ctx.contentResolver.openOutputStream(uri)?.bufferedWriter() ?: return t0
+                outUri = uri
                 w.write("GYROFLOW IMU LOG\n")
                 w.write("version,1.3\n")
                 w.write("id,cammax\n")
@@ -95,6 +97,13 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
     }
 
     fun endClip() = synchronized(lock) { closeLocked() }
+
+    // A clip that produced no video leaves no orphan .gcsv behind.
+    fun discardClip() = synchronized(lock) {
+        val u = outUri
+        closeLocked()
+        if (u != null) try { ctx.contentResolver.delete(u, null, null) } catch (_: Exception) {}
+    }
 
     fun stop() {
         sm.unregisterListener(this)
@@ -134,6 +143,7 @@ class GyroLogger(private val ctx: Context, private val readoutMs: () -> Float) :
     private fun closeLocked() {
         try { out?.flush(); out?.close() } catch (_: Exception) {}
         out = null
+        outUri = null
     }
 
     companion object {

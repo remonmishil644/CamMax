@@ -271,8 +271,16 @@
             app:cornerRadius="16dp"
             android:layout_marginTop="24dp"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/test2Btn"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:text="Sustained test (2 min)"
+            android:textSize="15sp"
+            android:minHeight="56dp"
+            app:cornerRadius="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
         <TextView
-            android:text="Records 10 seconds, saves the clip, and shows the frame rate the camera really delivered."
+            android:text="10 s: a quick check. 2 min: shows whether the frame rate holds as the phone warms up. Both save the clip and report fps, dropped frames, and heat. Keep this screen open to watch the live readout."
             android:textSize="13sp"
             android:textColor="@color/text_dim"
             android:lineSpacingMultiplier="1.25"

@@ -120,7 +120,8 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
-        b.testBtn.setOnClickListener { runTest() }
+        b.testBtn.setOnClickListener { runTest(10_000L) }
+        b.test2Btn.setOnClickListener { runTest(120_000L) }
         b.advancedBtn.setOnClickListener {
             val show = b.advancedBox.visibility != View.VISIBLE
             b.advancedBox.visibility = if (show) View.VISIBLE else View.GONE
@@ -278,11 +279,15 @@ class SettingsActivity : AppCompatActivity() {
         b.darkBtn.text = if (Blackout.canRun(this)) "Start dark mode now" else "Allow display over other apps"
         TextViewCompat.setCompoundDrawableTintList(b.statePill,
             ColorStateList.valueOf(ContextCompat.getColor(this, color)))
-        b.lastText.text = "Last: ${p.lastStatus}"
+        b.lastText.text = if (st == RecordingService.State.RECORDING)
+            "Now: ${RecordingService.liveFps} fps  \u00B7  heat ${RecordingService.liveThermal}/6  \u00B7  " +
+                    "%d:%02d".format(RecordingService.liveSeconds / 60, RecordingService.liveSeconds % 60)
+        else "Last: ${p.lastStatus}"
 
         val idle = st == RecordingService.State.IDLE
         b.testBtn.isEnabled = idle && missingPerms().isEmpty()
         b.testBtn.text = if (idle) "Test these settings (10 s)" else "$label…"
+        b.test2Btn.isEnabled = b.testBtn.isEnabled
 
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val free = try { StatFs(getExternalFilesDir(null)!!.path).availableBytes } catch (_: Exception) { Long.MAX_VALUE }
@@ -331,13 +336,13 @@ class SettingsActivity : AppCompatActivity() {
         b.warnBtn.setOnClickListener { onClick() }
     }
 
-    private fun runTest() {
+    private fun runTest(ms: Long) {
         if (RecordingService.state != RecordingService.State.IDLE) return
         EventLog.add(this, "test button")
         try {
             startForegroundService(Intent(this, RecordingService::class.java)
                 .setAction(RecordingService.ACTION_START)
-                .putExtra(RecordingService.EXTRA_AUTO_STOP_MS, 10_000L))
+                .putExtra(RecordingService.EXTRA_AUTO_STOP_MS, ms))
         } catch (e: Exception) {
             EventLog.add(this, "test start failed: $e")
             Toast.makeText(this, "Could not start: ${e.message}", Toast.LENGTH_LONG).show()
