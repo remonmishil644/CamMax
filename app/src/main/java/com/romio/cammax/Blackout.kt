@@ -6,8 +6,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -63,11 +66,25 @@ class BlackoutService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var overlay: View? = null
     private val showRunnable = Runnable { show() }
+    private var taps = 0
+    private val resetTaps = Runnable { taps = 0 }
+    // Samsung's camera stops when the screen turns off (cover closed, power key), so the overlay goes too.
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            EventLog.add(this@BlackoutService, "dark mode: screen off, exiting")
+            hide()
+        }
+    }
+    private var receiverOn = false
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground()
+        if (!receiverOn) {
+            registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF))
+            receiverOn = true
+        }
         when (intent?.action) {
             ACTION_SHOW -> if (overlay == null) {
                 main.removeCallbacks(showRunnable)
@@ -82,9 +99,9 @@ class BlackoutService : Service() {
     private fun show() {
         if (!Settings.canDrawOverlays(this) || overlay != null) { if (overlay == null) stopSelf(); return }
         val hint = TextView(this).apply {
-            text = "Hold 1 second to exit"
-            setTextColor(Color.rgb(70, 70, 70))
-            textSize = 14f
+            text = "Hold 1 second, or tap 3 times, to exit"
+            setTextColor(Color.rgb(110, 110, 110))
+            textSize = 15f
             visibility = View.INVISIBLE
         }
         val root = FrameLayout(this).apply {
@@ -100,6 +117,10 @@ class BlackoutService : Service() {
                     hint.visibility = View.VISIBLE
                     main.removeCallbacks(hideHint)
                     main.postDelayed(exit, 1_000)
+                    taps++
+                    main.removeCallbacks(resetTaps)
+                    main.postDelayed(resetTaps, 1_200)
+                    if (taps >= 3) { taps = 0; exit.run() }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     main.removeCallbacks(exit)
@@ -138,6 +159,7 @@ class BlackoutService : Service() {
 
     private fun hide() {
         main.removeCallbacksAndMessages(null)
+        if (receiverOn) { try { unregisterReceiver(screenOff) } catch (_: Exception) {}; receiverOn = false }
         overlay?.let {
             try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {}
         }
@@ -151,10 +173,15 @@ class BlackoutService : Service() {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
                 NotificationChannel(CH, "Dark mode", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
+            val exitPi = PendingIntent.getService(this, 1,
+                Intent(this, BlackoutService::class.java).setAction(ACTION_HIDE),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n: Notification = Notification.Builder(this, CH)
                 .setContentTitle("CamMax dark mode")
+                .setContentText("Hold the screen 1 s, tap 3 times, or use this button")
                 .setSmallIcon(android.R.drawable.presence_invisible)
                 .setOngoing(true)
+                .addAction(Notification.Action.Builder(null, "Exit dark mode", exitPi).build())
                 .build()
             if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(2, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -167,6 +194,7 @@ class BlackoutService : Service() {
     }
 
     override fun onDestroy() {
+        if (receiverOn) { try { unregisterReceiver(screenOff) } catch (_: Exception) {}; receiverOn = false }
         overlay?.let {
             try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {}
         }

@@ -199,7 +199,7 @@
                 android:layout_height="wrap_content">
 
                 <TextView
-                    android:text="Samsung keeps its own stabilization for its own camera. This mode opens Samsung's camera, then covers the screen in black after 5 seconds. Press a volume key to start and stop recording. Hold the black screen for 1 second to exit."
+                    android:text="Samsung keeps its own stabilization for its own camera. This mode opens Samsung's camera, then covers the screen in black after 5 seconds. Press a volume key to start and stop recording. To exit: hold the black screen for 1 second, or tap it 3 times, or pull down the notification shade and tap Exit dark mode. Keep the cover open: closing it turns the screen off, and Samsung's camera stops with it."
                     android:textSize="14sp"
                     android:textColor="@color/text"
                     android:lineSpacingMultiplier="1.25"
